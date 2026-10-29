@@ -70,6 +70,8 @@ AI 数学产出速度已超过人类审稿速度。跟进重点不是追每一�
 5. 完整证明还是 lemma 片段？
 6. 许可：Apache-2.0 / MIT 优先
 7. **无 Lean 也可入池**：若贡献是新算法或新理解，单独标 `type=algorithm|insight`，不冒充「已验证定理」
+8. **可执行复核桶（2026-10-29 增）**：产物是否自带「源码 + 命令记录 + 结果行 + 数值记录 + 校验器 + 边界声明」？齐备者第三方方可复跑；不齐者只作灵感
+9. **形式化差距**：读到「Lean 只证到 X、论文主张 Y」时，先量差距——差距本身就是可交付物（新理解桶）
 
 > 口诀：不能编译的当灵感；能编译的才当结论候选。新算法 / 新理解单独记账，不混进「已证」桶。
 
@@ -105,6 +107,28 @@ AI 数学产出速度已超过人类审稿速度。跟进重点不是追每一�
 
 - 元数据与 `CONTENTS.md` / `formalization.yaml` 雷达扫描
 - 只对入选条目做稀疏检出 / 单定理复现
+- **不克隆整仓**：用 GitHub API / raw / CDN 按目录取件；>20MB 单文件走 `git/blobs` API 或支持 Range 的镜像分块（`gh-proxy.com`）
+- Lean 工具链（elan / Lean 4）本机暂未装；装前先做陈述卡与差距说明，不硬跑全量 build
+
+### 2.5 审读与外推（2026-10-29 增）
+
+AI 数学产出速度快于人类审稿，缺口不在求解，而在消化。陶哲轩的判断：AI 交卷后，谁来解释关键步骤、谁来回答同行疑问、发现问题后谁来跟进。可操作化为三段复核：
+
+1. **数值一致性**：跑上游校验器，核存档记录内部自洽（≠ 归档认证 ≠ 实现证明）
+2. **算术 / ABI 契约**：用上游 `abi-fp-probe` 核 binary64、舍入模式、`FLT_EVAL_METHOD`、ABI 位宽
+3. **指令级核查**：查关键表达式是否按「分别舍入的 binary64」落地（仅看动态符号表没有 `pow` **不够**）
+
+结论一律与边界同句：引用上游自述的适用范围，不替上游扩大结论。样本见 `radar/2026-10-29-family266-mub-dim6-review.md`，规程见 `repro/mub-dim6/README.md`。
+
+### 2.6 外部通道（2026-10-29 增）
+
+| 通道 | 性质 | 本仓位置 |
+|---|---|---|
+| [Simons 基金会 1500 万美元计划](https://www.simonsfoundation.org/news/simons-foundation-launches-15m-effort-to-help-mathematicians-navigate-ai-era/) | 基金会经公开提案流程发放；资助形式化验证项目、研讨会、审阅标准、工具 | 产出「可被提案采纳的工作包」——复核包与差距说明 |
+| [mathcommunity/oai-math-revised](https://github.com/mathcommunity/oai-math-revised/) | 社区仓库，受邀参与修订 OpenAI 写稿，可申请 reviewer | 把复核结论与形式化差距整理成「写稿修订意见」投稿 |
+| openai/math `history.md` | 部分稿件明写「即刻公开材料以便他人检验」（族 378 点名 Impagliazzo–Paturi–Williams 工作组） | 第三方独立检验本身即被邀请的行为 |
+
+口径：1500 万是基金会项目池，非个人可申领奖金；现实位置是产出可被采纳的工作包。
 
 ## 3. 周常
 
@@ -123,3 +147,12 @@ AI 数学产出速度已超过人类审稿速度。跟进重点不是追每一�
 3. **工程算法**：family 107 matrix multiplication ω≤9/4 或 121 edit-distance 近似（有 Lean）
 
 旁路监听：HolomorphicAnosov（范本）、MechMath（生成-验证模板）、准 RH / Jacobsthal（衔接本地 PNT 线）。
+
+## 5. 第二轮结论摘要（2026-10-29）
+
+详见 `radar/2026-10-29-second-pass.md`。
+
+- **主沙盒**：102 Unique Games（陈述卡完成，深度待续）
+- **主执行面**：266 维六互偏基（可执行复核已完成：数值一致性 PASS、ABI 契约 PASS、`pow(...,2)` 指令级核查 PASS）
+- **下轮主攻**：378 证伪 ETH——量化 Lean 界与论文界的差距，产出可核查的对照与换算说明
+- **物理旁路**：376 强迫 Navier–Stokes 通用计算（按族陈述引用，不按媒体标题引用）
