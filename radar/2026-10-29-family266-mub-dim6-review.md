@@ -49,11 +49,14 @@ openai/math 整仓约 900 MB，不宜克隆。改按目录取件：`execution/da
 | `compiled-build/source/covout.cpp` | 5 286 | `2a7e6bf5ca485765` |
 | `compiled-build/source/stageB.cpp` | 12 030 | `7e609a2f282d519a` |
 | `compiled-build/source/stageC.cpp` | 17 471 | `60a1b10091852809` |
-| `compiled-build/source/atlas.cpp` | 8 821 | `dcbf2dbe1054c01` |
+| `compiled-build/source/atlas.cpp` | 8 821 | `dcbf2dbe1054c01f` |
 | `compiled-build/source/ub.cpp` | 11 557 | `bb031282340012e6` |
 | `compiled-build/source/patchx.cpp` | 16 137 | `a78a1ab171d8c7f1` |
 | `compiled-build/source/seed.cpp` | 3 514 | `3c6c7a7092230de2` |
 | `compiled-build/build.sh` | 1 303 | `81dc6c71ecaa6511` |
+
+> 2026-11-01 复核更正：上表 `atlas.cpp` 的 sha256 前缀原少记末位一位（15 位），已补为 `dcbf2dbe1054c01f`。
+> 该错使 `selfcheck.py` 的上游漂移检测恒报 1 处 `CHANGED`（误报）。上游文件本身未变。
 
 ### 3.2 第一段：数值记录一致性校验（通过）
 

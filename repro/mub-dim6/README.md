@@ -3,6 +3,43 @@
 本目录给出复跑路径，不搬运上游二进制与数值数据。  
 详细结论见 [`radar/2026-10-29-family266-mub-dim6-review.md`](../../radar/2026-10-29-family266-mub-dim6-review.md)。
 
+## 零、一键自检（绿卡）
+
+```bash
+python3 selfcheck.py --fetch
+```
+
+一条命令完成取件 → 哈希比对 → 上游校验器实跑 → 绿灯判定：
+
+```text
+validator: PASS within numerical consistency scope
+counts: centers 249878 / checked pairs 151744086 / fine records 22379 / batches 88
+pins: 12 matched, 0 changed
+GREEN: family 266 package is internally consistent
+```
+
+退出码：`0` 绿灯（校验器 PASS）/ `1` 红灯（校验器失败或关键文件缺失）/ `2` 环境未就绪。
+`selfcheck.py` 另做一件校验器不做的事：把 12 个关键文件（`commands.json`、`check_records.py`、`fine.bin`、`centers.txt`、6 个 `.cpp`、`build.sh`）
+的 sha256 前 16 位与 2026-10-29 复核卡记录的取值逐一比对，上游若已改动会直接报 `CHANGED` 而不是无声跑过。
+加 `--abi` 可在 Linux 上顺手编译并运行 `abi-fp-probe`（第二段的算术/ABI 契约）。
+
+> **2026-11-01 复核更正（两条真缺陷，勿据旧记录判读）**
+>
+> 1. `atlas.cpp` 的 sha256 前缀原少记末位一位（15 位），已更正为 `dcbf2dbe1054c01f`；
+>    比对改为 `digest.startswith(prefix)`，短前缀不再被误报成上游漂移。
+> 2. 2026-10-30 那轮取件在 `fine.bin` 处被中断，落地 25 165 824 字节（上游真实 33 746 388 字节，缺 8.58 MB）。
+>    上游校验器只验「记录内部自洽」，**不验记录是否完整**，故残缺数据也能拿到绿灯。
+>    取件脚本现已校验每个 Range 分块的返回长度与末块总长，不符即报错退出。
+>
+> 修好后的一次实测（2026-11-01）：
+>
+> ```text
+> validator: PASS within numerical consistency scope
+> counts: centers 249878 / checked pairs 151744086 / fine records 22379 / batches 88
+> pins: 12 matched, 0 changed
+> GREEN: family 266 package is internally consistent
+> ```
+
 ## 一、取件
 
 ```bash
@@ -10,6 +47,8 @@ python3 fetch-verification.py --out ./mub-dim6-verification
 ```
 
 脚本按上游目录清单逐文件取 `execution/data`、`execution/data/batches`、`execution/results`、`compiled-build/source`，并输出带 sha256 的 `_manifest.json`。
+  2026-10-30 修订：旧版脚本把目录**拍平**写入目标目录、且漏取 `execution/commands.json`、`execution/check_records.py`、`compiled-build/build.sh` 与 `batches/`，
+  导致按 README 运行的 `python3 execution/check_records.py` 必然找不到输入。现版**保留上游目录结构**，取件清单为 19 + 177 + 100 + 8 + 4 个文件。
 
 取件通道按「可用性」降级：
 
