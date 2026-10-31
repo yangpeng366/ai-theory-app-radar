@@ -48,7 +48,7 @@ AI 数学产出速度已超过人类审稿速度。跟进重点不是追每一�
 
 | 源 | 用途 |
 |---|---|
-| [openai/math](https://github.com/openai/math) | 规模最大的 AI 数学手稿库（719 篇 / 372 族，约 42% 顶线结果有 Lean） |
+| [openai/math](https://github.com/openai/math) | 规模最大的 AI 数学手稿库（**721 篇 / 373 族 / 最大族号 378**，2026-11-01 实测；约 42% 顶线结果有 Lean）。增量由 [`repro/monitor-upstream.py`](../repro/monitor-upstream.py) 自动盯 |
 | [VibeMathed](https://vibemathed.com/) / [mrconter1/vibemathed](https://github.com/mrconter1/vibemathed) | 社区策展的 AI 参与数学结果清单 |
 | [frenzymath/HolomorphicAnosov](https://github.com/frenzymath/HolomorphicAnosov) | 研究级猜想 + 完整形式化范本 |
 | [MechMath/MechMath-agent-team](https://github.com/MechMath/MechMath-agent-team) | NL-Prover / FL-Prover / KB-Manager 模板 |
@@ -108,7 +108,7 @@ AI 数学产出速度已超过人类审稿速度。跟进重点不是追每一�
 - 元数据与 `CONTENTS.md` / `formalization.yaml` 雷达扫描
 - 只对入选条目做稀疏检出 / 单定理复现
 - **不克隆整仓**：用 GitHub API / raw / CDN 按目录取件；>20MB 单文件走 `git/blobs` API 或支持 Range 的镜像分块（`gh-proxy.com`）
-- Lean 工具链（elan / Lean 4）本机暂未装；装前先做陈述卡与差距说明，不硬跑全量 build
+- Lean 工具链**已装好**（WSL `/root/.elan`，Lean 4.34.1，实测可编译，见 [`docs/lean-toolchain-setup.md`](lean-toolchain-setup.md)）；仍缺 Mathlib olean 缓存，故上游族模块暂不硬跑全量 build
 
 ### 2.5 审读与外推（2026-10-29 增）
 
@@ -156,3 +156,15 @@ AI 数学产出速度快于人类审稿，缺口不在求解，而在消化。�
 - **主执行面**：266 维六互偏基（可执行复核已完成：数值一致性 PASS、ABI 契约 PASS、`pow(...,2)` 指令级核查 PASS）
 - **下轮主攻**：378 证伪 ETH——量化 Lean 界与论文界的差距，产出可核查的对照与换算说明
 - **物理旁路**：376 强迫 Navier–Stokes 通用计算（按族陈述引用，不按媒体标题引用）
+
+## 6. 第四轮结论摘要（2026-11-01）
+
+详见 `radar/2026-11-01-fourth-pass.md`。
+
+- **族 266 绿灯坐实**：此前从未真正通过（`fine.bin` 被截断 8.58 MB，校验器读残缺记录仍报 PASS）；
+  补齐取件后校验器实跑 PASS、12 个关键文件哈希全中
+- **两处真缺陷已修**：取件分块不校验末块长度；复核卡 `atlas.cpp` 的 sha 前缀少记一位导致漂移检测恒误报
+- **族 378 差距说明复跑一致**：24 项 / FAIL 0 / 确证 1 处差距（`m ≤ Dn` 锐化界在取件范围内无对应陈述）
+- **Lean 4.34.1 已装好并实测可编译**（WSL），只差 Mathlib olean 缓存（GB 量级）
+- **上游增量**：自 10-30 起 `CONTENTS.md` / `history.md` 字节未变；两仓（上游 / 社区 fork）均为 721 篇 / 373 族 / 751 目录，已同步
+- **增量监听已固化**：`python repro/monitor-upstream.py --with-community --deep` 即可复跑

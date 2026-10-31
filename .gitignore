@@ -3,3 +3,5 @@ Thumbs.db
 *.lean.tmp
 .lake/
 build/
+__pycache__/
+*.pyc
