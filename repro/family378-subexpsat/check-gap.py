@@ -32,7 +32,6 @@ import json
 import math
 import os
 import re
-import sys
 
 # ---------------------------------------------------------------- utilities
 
@@ -397,19 +396,55 @@ def runtime_scale(n):
 
 def rho(n):
     """Lean's `rho`: base-two logarithms, squared log-log."""
-    l = math.log2(n)
-    return n * (math.log2(l)) ** 2 / math.sqrt(l)
+    log_n = math.log2(n)
+    return n * (math.log2(log_n)) ** 2 / math.sqrt(log_n)
 
 
 def paper_main(n):
     """Manuscript Theorem 1.1 main exponent: n log log n / sqrt(log n)."""
-    l = math.log2(n)
-    return n * math.log2(l) / math.sqrt(l)
+    log_n = math.log2(n)
+    return n * math.log2(log_n) / math.sqrt(log_n)
 
 
 def paper_sharp(n):
     """Manuscript Theorem 1.1 sharpening for m <= Dn: n / sqrt(log n)."""
     return n / math.sqrt(math.log2(n))
+
+
+def encoding_bound_samples():
+    """Return (violations, samples) for the C16 encoding-bound spot check."""
+    violations = []
+    samples = 0
+    for n in (3, 5, 9, 17):
+        for m in (0, 1, 2, 4, 8):
+            for k in (2, 3):
+                clauses = []
+                for index in range(m):
+                    width = min(k, 1 + index % k)
+                    clause = []
+                    for slot in range(width):
+                        variable = (index * 3 + slot * 5) % n
+                        clause.append((variable, (index + slot) % 2 == 0))
+                    clauses.append(clause)
+                length = len(encode_cnf_python(n, clauses))
+                lean_bound = n + 2 + (4 + (8 * n + 8) * k) * m
+                square_bound = (8 * k + 7) * (n + m + 1) ** 2
+                samples += 1
+                if not (length <= lean_bound and length + 1 <= square_bound):
+                    violations.append((n, m, k, length, lean_bound, square_bound))
+    return violations, samples
+
+
+def check_encoding_bounds():
+    violations, samples = encoding_bound_samples()
+    if violations:
+        record("C16 编码界数值复核", "FAIL",
+               "%d/%d samples violate the Lean bounds: %s"
+               % (len(violations), samples, violations[:2]))
+    else:
+        record("C16 编码界数值复核", "PASS",
+               "%d sampled formulas satisfy formulaBitLength <= n+2+(4+(8n+8)k)m "
+               "and L+1 <= (8k+7)(n+m+1)^2" % samples)
 
 
 def stage2(src, info):
@@ -452,32 +487,7 @@ def stage2(src, info):
     record("C15 编码换算引理", "PASS" if (has_sq and has_pow) else "FAIL",
            "encoding_le_declaredSize_sq + encoding_pow_le_declaredSize present")
 
-    violations = []
-    samples = 0
-    for n in (3, 5, 9, 17):
-        for m in (0, 1, 2, 4, 8):
-            for k in (2, 3):
-                clauses = []
-                for index in range(m):
-                    width = min(k, 1 + index % k)
-                    clause = []
-                    for slot in range(width):
-                        variable = (index * 3 + slot * 5) % n
-                        clause.append((variable, (index + slot) % 2 == 0))
-                    clauses.append(clause)
-                length = len(encode_cnf_python(n, clauses))
-                lean_bound = n + 2 + (4 + (8 * n + 8) * k) * m
-                square_bound = (8 * k + 7) * (n + m + 1) ** 2
-                samples += 1
-                if not (length <= lean_bound and length + 1 <= square_bound):
-                    violations.append((n, m, k, length, lean_bound, square_bound))
-    if violations:
-        record("C16 编码界数值复核", "FAIL", "%d/%d samples violate the Lean bounds: %s"
-               % (len(violures), samples, violations[:2]))
-    else:
-        record("C16 编码界数值复核", "PASS",
-               "%d sampled formulas satisfy formulaBitLength <= n+2+(4+(8n+8)k)m "
-               "and L+1 <= (8k+7)(n+m+1)^2" % samples)
+    check_encoding_bounds()
 
     # C17: numerical spot-check of the Lean lemma runtimeScale n <= 4 * rho n,
     # which is the bridge from the machine's own time scale to the manuscript's.
