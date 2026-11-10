@@ -168,6 +168,8 @@ def stage1(src):
         record("C1 取件完整性", "SKIP", "no _manifest.json")
         return {}
     manifest = json.loads(read(manifest_path))
+    if isinstance(manifest, dict):  # 2026-11-11+: top-level pin fields + "files"
+        manifest = manifest.get("files", [])
     bad = []
     total = 0
     for item in manifest:

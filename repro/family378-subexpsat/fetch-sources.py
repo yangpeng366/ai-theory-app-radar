@@ -8,10 +8,21 @@ is ~1.7 MB.
 
 Files are fetched per channel, in order of preference:
 
-  1. cdn.jsdelivr.net/gh/openai/math@main/<path>   (fast, refuses > 20 MB)
-  2. raw.githubusercontent.com/openai/math/main/<path>   (authoritative, flaky)
-  3. api.github.com/repos/openai/math/contents/<path>?ref=main
+  1. cdn.jsdelivr.net/gh/openai/math@<ref>/<path>   (fast, refuses > 20 MB)
+  2. raw.githubusercontent.com/openai/math/<ref>/<path>   (authoritative, flaky)
+  3. api.github.com/repos/openai/math/contents/<path>?ref=<ref>
      (no sha needed; base64 inline below 1 MB, raw media type above it)
+
+<ref> is pinned, not assumed.  A branch name moves, so "the same manifest"
+rebuilt tomorrow against `main` cannot be proven to be the same bytes.  The
+script therefore resolves the requested ref to a commit sha through
+`GET /repos/openai/math/commits/<ref>` (one request, cached for the run) and
+then uses that sha on all three channels.  `--ref <40-hex sha>` skips the
+request; `--no-resolve` skips it too and uses the value verbatim (offline tests,
+internal mirrors).  The sha lands in the manifest as `ref_resolved`, so two
+runs can be compared byte for byte; a failed resolution prints a WARNING and
+records `ref_source: unresolved` + `ref_error` instead of pretending to be
+pinned.
 
 Channel 3 is not a nicety: on 2026-11-11 channels 1 and 2 timed out for four
 consecutive rounds (12-30 s each) while api.github.com answered in ~1 s.  The
@@ -27,20 +38,27 @@ carries an HTML error page or a rate-limit page is rejected and the next
 channel is tried, instead of being saved as if it were Lean/PDF.  Unauthenticated
 api.github.com allows 60 requests/hour; set GITHUB_TOKEN to raise that.  The
 token is sent only as a header, never in a URL, a log line or the manifest.
+Resolving a branch ref costs exactly one extra API request per run (the sha is
+reused by every channel and every closure fetch, and is never re-resolved);
+pass a 40-hex sha or --no-resolve to spend none.
 
 Usage:
     python3 fetch-sources.py --out ./family378-sources
     python3 fetch-sources.py --out ./family378-sources --no-paper   # skip the PDF
     python3 fetch-sources.py --out ./f378 --no-include-imports      # seed list only
+    python3 fetch-sources.py --out ./f378 --ref <40-hex sha>        # already pinned
+    python3 fetch-sources.py --out ./f378 --ref main --no-resolve   # offline mirror
 
 FILES is a statement-level list: it names the files a reviewer must read, not a
 set that compiles.  By default the script therefore keeps the set but closes it
 under `import OAI.*` (--include-imports, capped by --max-modules), so the same
 run produces a tree whose OAI imports resolve inside the fetched subset.
 
-It writes a `_manifest.json` next to the fetched tree with the sha256 of every
-fetched file, and a `_closure.json` describing how the import walk ended, so
-the review can be re-run against a pinned copy.
+It writes a `_manifest.json` next to the fetched tree: an object carrying the
+upstream repo, the requested ref, the resolved commit sha, when it was resolved
+and how (`ref_source`), plus a `files` list with the sha256 of every fetched
+file.  `_closure.json` describes how the import walk ended.  Together they let
+the review be re-run against a pinned copy and let two runs be proven identical.
 
 Exit codes: 0 = every fetch succeeded and the closure is complete;
 1 = at least one fetch failed (partial closure, or partial seed list);
@@ -49,6 +67,7 @@ Exit codes: 0 = every fetch succeeded and the closure is complete;
 
 import argparse
 import base64
+import datetime
 import hashlib
 import http.client
 import json
@@ -61,10 +80,29 @@ import urllib.parse
 import urllib.request
 
 REPO = "openai/math"
-REF = "main"
-CDN = "https://cdn.jsdelivr.net/gh/{repo}@{ref}/".format(repo=REPO, ref=REF)
-RAW = "https://raw.githubusercontent.com/{repo}/{ref}/".format(repo=REPO, ref=REF)
+DEFAULT_REF = "main"
+
+# A 40-hex commit sha is used verbatim and never sent to the commits API: it is
+# already immutable, and resolving it would only spend quota to learn what the
+# caller told us.
+SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+
 API = "https://api.github.com/repos/{repo}".format(repo=REPO)
+
+
+def cdn_base(ref):
+    """jsDelivr base for ``ref``; @<sha> is a supported, immutable jsDelivr ref."""
+    return "https://cdn.jsdelivr.net/gh/{repo}@{ref}/".format(repo=REPO, ref=ref)
+
+
+def raw_base(ref):
+    return "https://raw.githubusercontent.com/{repo}/{ref}/".format(repo=REPO, ref=ref)
+
+
+def contents_url(remote, ref):
+    return (API + "/contents/" + urllib.parse.quote(remote, safe="/")
+            + "?ref=" + urllib.parse.quote(ref, safe=""))
+
 
 # The contents endpoint inlines base64 only below 1 MB; above that GitHub sends
 # the object form with encoding="none" and an empty content field, so the body
@@ -142,7 +180,8 @@ def _api_headers(accept):
     return headers
 
 
-def _api_get(url, timeout=240, tries=4, accept="application/vnd.github+json"):
+def _api_get(url, timeout=240, tries=4, accept="application/vnd.github+json",
+             ref=DEFAULT_REF):
     """GET an api.github.com URL; retry transport errors, not refusals."""
     last = None
     for index in range(tries):
@@ -165,7 +204,7 @@ def _api_get(url, timeout=240, tries=4, accept="application/vnd.github+json"):
                     "the unauthenticated quota is 60 requests/hour - set GITHUB_TOKEN "
                     "to raise it" % (error.code, remaining, snippet[:160])) from None
             if error.code == 404:
-                raise ChannelError("HTTP 404: no such path at ref %s" % REF) from None
+                raise ChannelError("HTTP 404: no such path at ref %s" % ref) from None
             last = error
         except http.client.IncompleteRead as error:
             # A 200 whose body stops early: retryable, but never writable.
@@ -179,8 +218,60 @@ def _api_get(url, timeout=240, tries=4, accept="application/vnd.github+json"):
     raise last
 
 
-def fetch_contents(remote, timeout=240, tries=4):
-    """Third channel: GET /repos/openai/math/contents/<path>?ref=main.
+def _scrub(text):
+    """Strip any configured token from a message before it is printed or stored.
+
+    The token is only ever sent as a header, so it should never reach a message
+    in the first place; this is the belt after the braces, because a manifest or
+    a WARNING is copied into review notes by hand.
+    """
+    text = "" if text is None else str(text)
+    for name in ("GITHUB_TOKEN", "GH_TOKEN"):
+        value = os.environ.get(name)
+        if value and len(value) >= 8:
+            text = text.replace(value, "***")
+    return text
+
+
+def utc_now():
+    """ISO 8601, UTC, second resolution, `Z` suffix (sortable, timezone-proof)."""
+    stamp = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    return stamp.isoformat().replace("+00:00", "Z")
+
+
+def resolve_ref(ref, timeout=30, tries=2):
+    """Resolve a branch/tag ref to a commit sha.  Returns ``(sha, source, error)``.
+
+    - 40-hex input: used verbatim, no request, source ``arg-sha``.
+    - otherwise: one `GET /repos/openai/math/commits/<ref>`; source ``api-commit``.
+
+    Never raises.  A network error, 403/429, 404, non-JSON body or a payload
+    without a 40-hex `sha` comes back as ``(None, "unresolved", message)`` so the
+    caller can keep fetching with the requested ref *and say so*, instead of
+    silently labelling a moving branch as a pinned commit.
+    """
+    if SHA_RE.match(ref):
+        return ref.lower(), "arg-sha", None
+    url = API + "/commits/" + urllib.parse.quote(ref, safe="")
+    try:
+        body, _headers = _api_get(url, timeout=timeout, tries=tries, ref=ref)
+    except Exception as error:  # noqa: BLE001 - any failure means "unpinned"
+        return None, "unresolved", _scrub(_short(error))
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception as error:  # noqa: BLE001 - an HTML rate-limit page lands here
+        return None, "unresolved", _scrub(
+            "api-commit: not JSON (%s); first 80 bytes=%r" % (error, body[:80]))
+    sha = payload.get("sha") if isinstance(payload, dict) else None
+    if not isinstance(sha, str) or not SHA_RE.match(sha):
+        return None, "unresolved", _scrub(
+            "api-commit: no 40-hex 'sha' in the response (top-level type=%s, sha=%r)"
+            % (type(payload).__name__, sha))
+    return sha.lower(), "api-commit", None
+
+
+def fetch_contents(remote, timeout=240, tries=4, ref=DEFAULT_REF):
+    """Third channel: GET /repos/openai/math/contents/<path>?ref=<ref>.
 
     Returns ``(blob, channel_name)``.  Used instead of tree+blob because the
     recursive tree of openai/math is truncated by the API (measured 2026-11-11:
@@ -196,9 +287,8 @@ def fetch_contents(remote, timeout=240, tries=4):
     also stop at 100 MB) and the tree or a clone is required; that case fails
     loudly here instead of writing a short file.
     """
-    url = (API + "/contents/" + urllib.parse.quote(remote, safe="/")
-           + "?ref=" + urllib.parse.quote(REF, safe=""))
-    body, _headers = _api_get(url, timeout=timeout, tries=tries)
+    url = contents_url(remote, ref)
+    body, _headers = _api_get(url, timeout=timeout, tries=tries, ref=ref)
     try:
         payload = json.loads(body.decode("utf-8"))
     except Exception as error:  # noqa: BLE001 - an HTML rate-limit page lands here
@@ -222,7 +312,7 @@ def fetch_contents(remote, timeout=240, tries=4):
         if isinstance(size, int) and size > CONTENT_RAW_MAX:
             raise ChannelError("api-contents: %d bytes exceeds the 100 MB API cap" % size)
         blob, _headers = _api_get(url, timeout=timeout, tries=tries,
-                                  accept="application/vnd.github.raw")
+                                  accept="application/vnd.github.raw", ref=ref)
     if isinstance(size, int) and len(blob) != size:
         raise ChannelError("api-contents: size mismatch (declared %d, got %d)"
                            % (size, len(blob)))
@@ -293,16 +383,19 @@ def sha256_of(path):
 
 
 def _short(error):
-    message = str(error).replace("\n", " ")[:120]
+    message = _scrub(str(error)).replace("\n", " ")[:120]
     return "%s: %s" % (type(error).__name__, message) if message else type(error).__name__
 
 
-def fetch_one(remote, local, out_dir, timeout=240, tries=4):
+def fetch_one(remote, local, out_dir, timeout=240, tries=4, ref=DEFAULT_REF):
     """Try each channel in order; return a manifest record.
 
     ``channel`` is the hop that actually served the bytes (None if all failed),
     ``via`` keeps the attempt order with each hop's outcome so a later reader can
     tell "raw timed out" from "raw served an HTML page that we rejected".
+
+    ``ref`` is the pinned value used by all three channels: a commit sha in
+    normal operation, a branch name only when resolution failed or was skipped.
     """
     target = os.path.join(out_dir, local.replace("/", os.sep))
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -310,15 +403,17 @@ def fetch_one(remote, local, out_dir, timeout=240, tries=4):
     errors = []
     via = []
     for channel, fetch in (
-            ("jsdelivr", lambda: (_get(CDN + quoted, timeout=timeout, tries=tries),
-                                   "jsdelivr")),
-            ("raw", lambda: (_get(RAW + quoted, timeout=timeout, tries=tries), "raw")),
-            ("api-contents", lambda: fetch_contents(remote, timeout=timeout, tries=tries))):
+            ("jsdelivr", lambda: (_get(cdn_base(ref) + quoted, timeout=timeout,
+                                       tries=tries), "jsdelivr")),
+            ("raw", lambda: (_get(raw_base(ref) + quoted, timeout=timeout,
+                                  tries=tries), "raw")),
+            ("api-contents", lambda: fetch_contents(remote, timeout=timeout,
+                                                    tries=tries, ref=ref))):
         try:
             blob, served_by = fetch()
             validate_content(remote, blob)
         except Exception as error:  # noqa: BLE001 - try the next hop
-            errors.append("%s: %s" % (channel, str(error)[:200]))
+            errors.append(_scrub("%s: %s" % (channel, str(error)[:200])))
             via.append("%s -> %s" % (channel, _short(error)))
             continue
         with open(target, "wb") as handle:
@@ -377,7 +472,7 @@ def _log(message):
 
 
 def close_imports(out_dir, manifest, *, max_modules=DEFAULT_MAX_MODULES,
-                  timeout=240, tries=4, log=_log):
+                  timeout=240, tries=4, ref=DEFAULT_REF, log=_log):
     """Fetch the OAI import closure of what is already on disk.
 
     A statement-level set cannot satisfy C11: the statements import execution
@@ -423,7 +518,8 @@ def close_imports(out_dir, manifest, *, max_modules=DEFAULT_MAX_MODULES,
         tried.add(module)
         rel = module.replace(".", "/") + ".lean"
         remote = "lean/" + rel
-        record = fetch_one(remote, remote, out_dir, timeout=timeout, tries=tries)
+        record = fetch_one(remote, remote, out_dir, timeout=timeout, tries=tries,
+                           ref=ref)
         record.update({"origin": "import", "module": module,
                        "imported_by": sorted(imported_by.get(module, ()))})
         if record["channel"] is None:
@@ -464,22 +560,56 @@ def main(argv=None):
                         help="cap on files added by the import walk (default: %d)" % DEFAULT_MAX_MODULES)
     parser.add_argument("--timeout", type=int, default=240, help="per-request timeout in seconds")
     parser.add_argument("--tries", type=int, default=4, help="attempts per channel")
+    parser.add_argument("--ref", default=DEFAULT_REF, metavar="NAME-OR-SHA",
+                        help="upstream git ref to fetch: branch, tag or 40-hex commit sha "
+                             "(default: %(default)s). A sha is used verbatim; anything else "
+                             "is resolved to a commit sha before any file is fetched")
+    parser.add_argument("--no-resolve", dest="no_resolve", action="store_true",
+                        help="never call the commits API; use --ref verbatim (offline tests, "
+                             "internal mirrors). The manifest then cannot claim a pinned commit")
     args = parser.parse_args(argv)
 
     out_dir = os.path.abspath(args.out)
     os.makedirs(out_dir, exist_ok=True)
 
+    # Pin before fetching: one resolution request decides the immutable value
+    # that all three channels and every closure fetch will use.
+    requested = args.ref
+    resolved = None
+    ref_error = None
+    if args.no_resolve:
+        effective = requested
+        ref_source = "no-resolve"
+        print("ref: requested=%s source=no-resolve (commits API skipped; "
+              "not proven pinned)" % requested, flush=True)
+    else:
+        resolved, ref_source, ref_error = resolve_ref(
+            requested, timeout=min(args.timeout, 30), tries=min(args.tries, 2))
+        if resolved:
+            effective = resolved
+            print("ref: requested=%s resolved=%s source=%s"
+                  % (requested, resolved, ref_source), flush=True)
+        else:
+            effective = requested
+            ref_source = "unresolved"
+            print("WARNING: could not resolve ref %r to a commit sha (%s); fetching with "
+                  "%r as-is. This run is NOT byte-pinned - the manifest records "
+                  "ref_resolved=null + ref_error, and the same command tomorrow may "
+                  "return different bytes. Pass a 40-hex sha via --ref to pin."
+                  % (requested, ref_error, requested), flush=True)
+    ref_resolved_at = utc_now()
+
     jobs = list(FILES)
     if not args.no_paper:
         jobs.append(PAPER)
 
-    manifest = []
+    files = []
     seed_failed = []
     for remote, local in jobs:
         record = fetch_one(remote, local, out_dir,
-                           timeout=args.timeout, tries=args.tries)
+                           timeout=args.timeout, tries=args.tries, ref=effective)
         record["origin"] = "seed"
-        manifest.append(record)
+        files.append(record)
         print("%-12s %8s  %s" % (record["channel"] or "FAILED",
                                  record["bytes"] if record["bytes"] is not None else "-",
                                  remote), flush=True)
@@ -490,19 +620,31 @@ def main(argv=None):
     seed_ok = len(jobs) - len(seed_failed)
     print("seed: %d/%d files" % (seed_ok, len(jobs)), flush=True)
 
+    def build_manifest():
+        """Top-level pin + per-file records; written twice (before/after closure)."""
+        return {
+            "upstream_repo": REPO,
+            "ref_requested": requested,
+            "ref_resolved": resolved,
+            "ref_resolved_at": ref_resolved_at,
+            "ref_source": ref_source,
+            "ref_error": ref_error,
+            "files": files,
+        }
+
     manifest_path = os.path.join(out_dir, "_manifest.json")
     # Pin what we have before the (long) walk, so an interrupted run still
     # leaves a verifiable manifest instead of nothing.
-    write_json(manifest_path, manifest)
+    write_json(manifest_path, build_manifest())
 
     closure = None
     if args.include_imports:
         print("closing imports (--max-modules=%d, timeout=%ss, tries=%d)"
               % (args.max_modules, args.timeout, args.tries), flush=True)
-        closure = close_imports(out_dir, manifest, max_modules=args.max_modules,
-                                timeout=args.timeout, tries=args.tries)
+        closure = close_imports(out_dir, files, max_modules=args.max_modules,
+                                timeout=args.timeout, tries=args.tries, ref=effective)
 
-    write_json(manifest_path, manifest)
+    write_json(manifest_path, build_manifest())
 
     if closure is None:
         status = "skipped"
@@ -538,11 +680,16 @@ def main(argv=None):
         "failed": closure["failed"] if closure else [],
         "not_fetched": closure["remaining"] if closure else [],
         "complete": bool(closure and closure["complete"]),
+        "upstream_repo": REPO,
+        "ref_source": ref_source,
+        "ref_resolved": resolved,
     })
 
-    total = sum(r["bytes"] or 0 for r in manifest)
-    ok = sum(1 for r in manifest if r["channel"] is not None)
-    print("fetched %d/%d files, %d bytes total -> %s" % (ok, len(manifest), total, manifest_path))
+    total = sum(record["bytes"] or 0 for record in files)
+    ok = sum(1 for record in files if record["channel"] is not None)
+    print("fetched %d/%d files, %d bytes total -> %s" % (ok, len(files), total, manifest_path))
+    print("pin: repo=%s requested=%s resolved=%s source=%s"
+          % (REPO, requested, resolved or "null", ref_source), flush=True)
     print("closure status: %s -> %s" % (status, closure_path), flush=True)
 
     if seed_failed or (closure and closure["failed"]):

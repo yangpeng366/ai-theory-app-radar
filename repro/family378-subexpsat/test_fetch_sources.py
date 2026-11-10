@@ -9,6 +9,7 @@ Run from the repository root:
 """
 
 import base64
+import datetime
 import hashlib
 import http.client
 import importlib.util
@@ -47,7 +48,7 @@ def write_lean(root, module, text):
 def install_fake(monkeypatch, sources, calls, fail=()):
     """Replace fetch_one with an offline fake; sources maps remote path -> text."""
 
-    def _fetch(remote, local, out_dir, timeout=240, tries=4):
+    def _fetch(remote, local, out_dir, timeout=240, tries=4, ref=None):
         calls.append(remote)
         target = os.path.join(out_dir, local.replace("/", os.sep))
         if remote in fail or remote not in sources:
@@ -188,7 +189,7 @@ def test_main_default_runs_closure_and_writes_manifest(tmp_path, monkeypatch, ca
     install_fake(monkeypatch, sources, [])
     out = str(tmp_path / "out")
 
-    code = fs.main(["--out", out, "--no-paper"])
+    code = fs.main(["--out", out, "--no-paper", "--no-resolve"])
     text = capsys.readouterr().out
 
     assert code == 0
@@ -196,8 +197,8 @@ def test_main_default_runs_closure_and_writes_manifest(tmp_path, monkeypatch, ca
     assert "closure: complete (1 file(s) added" in text
     assert "fetched 2/2 files" in text
     manifest = json.load(open(os.path.join(out, "_manifest.json"), encoding="utf-8"))
-    assert [record["origin"] for record in manifest] == ["seed", "import"]
-    assert manifest[0]["local"] == seed
+    assert [record["origin"] for record in manifest["files"]] == ["seed", "import"]
+    assert manifest["files"][0]["local"] == seed
     closure = json.load(open(os.path.join(out, "_closure.json"), encoding="utf-8"))
     assert closure["status"] == "complete"
     assert closure["complete"] is True
@@ -213,7 +214,7 @@ def test_main_truncation_exits_2(tmp_path, monkeypatch, capsys):
     install_fake(monkeypatch, sources, [])
     out = str(tmp_path / "out")
 
-    code = fs.main(["--out", out, "--no-paper", "--max-modules", "1"])
+    code = fs.main(["--out", out, "--no-paper", "--max-modules", "1", "--no-resolve"])
     text = capsys.readouterr().out
 
     assert code == 2
@@ -223,7 +224,7 @@ def test_main_truncation_exits_2(tmp_path, monkeypatch, capsys):
     assert closure["not_fetched"] == ["OAI.C"]
     # the file that was fetched is still pinned in the manifest
     manifest = json.load(open(os.path.join(out, "_manifest.json"), encoding="utf-8"))
-    assert [record["origin"] for record in manifest] == ["seed", "import"]
+    assert [record["origin"] for record in manifest["files"]] == ["seed", "import"]
 
 
 def test_main_failed_import_exits_1(tmp_path, monkeypatch, capsys):
@@ -233,7 +234,7 @@ def test_main_failed_import_exits_1(tmp_path, monkeypatch, capsys):
     install_fake(monkeypatch, sources, [], fail=("lean/OAI/B.lean",))
     out = str(tmp_path / "out")
 
-    code = fs.main(["--out", out, "--no-paper"])
+    code = fs.main(["--out", out, "--no-paper", "--no-resolve"])
     text = capsys.readouterr().out
 
     assert code == 1
@@ -252,7 +253,7 @@ def test_main_seed_only_is_flagged_as_skipped(tmp_path, monkeypatch, capsys):
     install_fake(monkeypatch, sources, calls)
     out = str(tmp_path / "out")
 
-    code = fs.main(["--out", out, "--no-paper", "--no-include-imports"])
+    code = fs.main(["--out", out, "--no-paper", "--no-include-imports", "--no-resolve"])
     text = capsys.readouterr().out
 
     assert code == 0
@@ -597,7 +598,230 @@ def test_manifest_records_api_channel_and_via(tmp_path, monkeypatch, capsys):
 
     assert code == 0
     manifest = json.load(open(os.path.join(out, "_manifest.json"), encoding="utf-8"))
-    assert manifest[0]["channel"] == "api-contents"
-    assert [entry.split(" -> ")[0] for entry in manifest[0]["via"]] == [
+    assert manifest["files"][0]["channel"] == "api-contents"
+    assert [entry.split(" -> ")[0] for entry in manifest["files"][0]["via"]] == [
         "jsdelivr", "raw", "api-contents"]
-    assert manifest[0]["via"][-1] == "api-contents -> ok"
+    assert manifest["files"][0]["via"][-1] == "api-contents -> ok"
+
+
+# ----------------------------------------------- ref pinning (--ref / --no-resolve)
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+COMMITS_PREFIX = "https://api.github.com/repos/openai/math/commits/"
+
+
+def commit_payload(sha=SHA):
+    return json.dumps({"sha": sha, "commit": {"message": "m"}}).encode("utf-8")
+
+
+def read_manifest(out):
+    with open(os.path.join(out, "_manifest.json"), encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def test_arg_sha_is_used_verbatim_on_all_three_channels(tmp_path, monkeypatch, capsys):
+    seed = "lean/OAI/A.lean"
+    monkeypatch.setattr(fs, "FILES", [(seed, seed)])
+
+    def handler(url, _accept):
+        assert not url.startswith(COMMITS_PREFIX), "a 40-hex sha must not be resolved"
+        if channel_of(url) == "api-contents":
+            return FakeResponse(contents_payload(LEAN))
+        return TimeoutError("timed out")
+
+    calls = install_transport(monkeypatch, handler)
+    out = str(tmp_path / "out")
+
+    code = fs.main(["--out", out, "--no-paper", "--no-include-imports",
+                    "--ref", SHA, "--tries", "1"])
+
+    assert code == 0
+    text = capsys.readouterr().out
+    assert "ref: requested=%s resolved=%s source=arg-sha" % (SHA, SHA) in text
+    urls = [call["url"] for call in calls]
+    assert "cdn.jsdelivr.net/gh/openai/math@%s/" % SHA in urls[0]
+    assert "raw.githubusercontent.com/openai/math/%s/" % SHA in urls[1]
+    assert "?ref=%s" % SHA in urls[2]
+    manifest = read_manifest(out)
+    assert manifest["ref_requested"] == SHA
+    assert manifest["ref_resolved"] == SHA
+    assert manifest["ref_source"] == "arg-sha"
+    assert manifest["ref_error"] is None
+
+
+def test_branch_ref_resolves_once_and_all_files_use_the_sha(tmp_path, monkeypatch, capsys):
+    seeds = ["lean/OAI/A.lean", "lean/OAI/B.lean", "lean/OAI/C.lean"]
+    monkeypatch.setattr(fs, "FILES", [(seed, seed) for seed in seeds])
+
+    def handler(url, _accept):
+        if url.startswith(COMMITS_PREFIX):
+            return FakeResponse(commit_payload())
+        return FakeResponse(LEAN)
+
+    calls = install_transport(monkeypatch, handler)
+    out = str(tmp_path / "out")
+
+    code = fs.main(["--out", out, "--no-paper", "--no-include-imports",
+                    "--ref", "main", "--tries", "1"])
+
+    assert code == 0
+    commits = [call for call in calls if call["url"].startswith(COMMITS_PREFIX)]
+    assert len(commits) == 1  # one resolution, reused for every file
+    assert commits[0]["url"] == COMMITS_PREFIX + "main"
+    served = [call["url"] for call in calls if "cdn.jsdelivr.net" in call["url"]]
+    assert len(served) == 3
+    assert all("@%s/" % SHA in url for url in served)
+    manifest = read_manifest(out)
+    assert manifest["ref_source"] == "api-commit"
+    assert manifest["ref_resolved"] == SHA
+    assert manifest["ref_requested"] == "main"
+    assert len(manifest["files"]) == 3
+
+
+def test_resolution_403_warns_falls_back_and_records_unresolved(tmp_path, monkeypatch, capsys):
+    seed = "lean/OAI/A.lean"
+    monkeypatch.setattr(fs, "FILES", [(seed, seed)])
+    body = b'{"message":"API rate limit exceeded for 1.2.3.4"}'
+
+    def handler(url, _accept):
+        if url.startswith(COMMITS_PREFIX):
+            return urllib.error.HTTPError(url, 403, "rate limit exceeded",
+                                          {"X-RateLimit-Remaining": "0"},
+                                          io.BytesIO(body))
+        return FakeResponse(LEAN)
+
+    calls = install_transport(monkeypatch, handler)
+    out = str(tmp_path / "out")
+
+    code = fs.main(["--out", out, "--no-paper", "--no-include-imports",
+                    "--ref", "main", "--tries", "4"])
+    text = capsys.readouterr().out
+
+    assert code == 0  # the fallback still fetches; the run just is not pinned
+    assert len([c for c in calls if c["url"].startswith(COMMITS_PREFIX)]) == 1  # 403 not retried
+    assert "WARNING" in text
+    assert "NOT byte-pinned" in text
+    assert "403" in text
+    assert "resolved=null" in text
+    # fell back to the requested branch name on every channel
+    fetched = [call["url"] for call in calls if not call["url"].startswith(COMMITS_PREFIX)]
+    assert all("@main/" in url or "/main/" in url or "?ref=main" in url for url in fetched)
+    manifest = read_manifest(out)
+    assert manifest["ref_source"] == "unresolved"
+    assert manifest["ref_resolved"] is None
+    assert manifest["ref_requested"] == "main"
+    assert "403" in manifest["ref_error"]
+    assert manifest["files"][0]["channel"] is not None  # bytes still arrived
+
+
+@pytest.mark.parametrize("body,needle", [
+    (HTML_PAGE, "not JSON"),
+    (b'{"commit": {"message": "no sha here"}}', "no 40-hex"),
+    (b'["not", "an", "object"]', "no 40-hex"),
+])
+def test_resolution_bad_payload_is_a_reported_error(tmp_path, monkeypatch, body, needle):
+    def handler(url, _accept):
+        assert url.startswith(COMMITS_PREFIX)
+        return FakeResponse(body)
+
+    install_transport(monkeypatch, handler)
+
+    resolved, source, error = fs.resolve_ref("main", timeout=1, tries=1)
+
+    assert resolved is None  # never a guessed sha
+    assert source == "unresolved"
+    assert needle in error
+
+
+def test_manifest_ref_fields_are_complete_and_the_timestamp_parses(tmp_path, monkeypatch):
+    seed = "lean/OAI/A.lean"
+    monkeypatch.setattr(fs, "FILES", [(seed, seed)])
+
+    def handler(url, _accept):
+        if url.startswith(COMMITS_PREFIX):
+            return FakeResponse(commit_payload())
+        return FakeResponse(LEAN)
+
+    install_transport(monkeypatch, handler)
+    out = str(tmp_path / "out")
+
+    code = fs.main(["--out", out, "--no-paper", "--no-include-imports",
+                    "--ref", "main", "--tries", "1"])
+
+    assert code == 0
+    manifest = read_manifest(out)
+    for field in ("upstream_repo", "ref_requested", "ref_resolved",
+                  "ref_resolved_at", "ref_source"):
+        assert field in manifest, field
+    assert manifest["upstream_repo"] == "openai/math"
+    stamp = manifest["ref_resolved_at"]
+    assert stamp.endswith("Z")
+    parsed = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    assert parsed.utcoffset() == datetime.timedelta(0)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    assert abs((now - parsed).total_seconds()) < 300
+    assert "ref_error" in manifest
+
+
+def test_token_is_sent_as_a_header_and_never_reaches_manifest_or_warning(
+        tmp_path, monkeypatch, capsys):
+    token = "ghp_SECRET_SENTINEL_999"
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    seed = "lean/OAI/A.lean"
+    monkeypatch.setattr(fs, "FILES", [(seed, seed)])
+    # The worst case: the response body echoes the credential back at us.
+    body = ('{"message":"Bad credentials for %s"}' % token).encode("utf-8")
+
+    def handler(url, _accept):
+        if url.startswith(COMMITS_PREFIX):
+            return urllib.error.HTTPError(url, 403, "Bad credentials",
+                                          {"X-RateLimit-Remaining": "0"},
+                                          io.BytesIO(body))
+        return FakeResponse(LEAN)
+
+    calls = install_transport(monkeypatch, handler)
+    out = str(tmp_path / "out")
+
+    code = fs.main(["--out", out, "--no-paper", "--no-include-imports",
+                    "--ref", "main", "--tries", "1"])
+    text = capsys.readouterr().out
+
+    assert code == 0
+    commits = [call for call in calls if call["url"].startswith(COMMITS_PREFIX)]
+    assert commits[0]["auth"] == "Bearer " + token
+    assert all(token not in call["url"] for call in calls)
+    assert token not in text
+    assert "***" in text
+    with open(os.path.join(out, "_manifest.json"), encoding="utf-8") as handle:
+        raw = handle.read()
+    assert token not in raw
+    manifest = json.loads(raw)
+    assert token not in json.dumps(manifest.get("ref_error"), ensure_ascii=False)
+    assert manifest["ref_source"] == "unresolved"
+
+
+def test_no_resolve_skips_the_commits_api(tmp_path, monkeypatch, capsys):
+    seed = "lean/OAI/A.lean"
+    monkeypatch.setattr(fs, "FILES", [(seed, seed)])
+
+    def handler(url, _accept):
+        assert not url.startswith(COMMITS_PREFIX), "--no-resolve must not call /commits"
+        return FakeResponse(LEAN)
+
+    calls = install_transport(monkeypatch, handler)
+    out = str(tmp_path / "out")
+
+    code = fs.main(["--out", out, "--no-paper", "--no-include-imports",
+                    "--ref", "main", "--no-resolve", "--tries", "1"])
+    text = capsys.readouterr().out
+
+    assert code == 0
+    assert "no-resolve" in text
+    assert "@main/" in calls[0]["url"]
+    manifest = read_manifest(out)
+    assert manifest["ref_source"] == "no-resolve"
+    assert manifest["ref_requested"] == "main"
+    assert manifest["ref_resolved"] is None  # nothing was proven to be a sha
+    assert manifest["ref_error"] is None
+    assert manifest["files"][0]["channel"] == "jsdelivr"

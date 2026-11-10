@@ -7,8 +7,33 @@
 ## 一、取件
 
 ```powershell
-python fetch-sources.py --out ./f378
+# 推荐：钉住 commit sha（同一份 manifest 跨天可字节级复现）
+python fetch-sources.py --out ./f378 --ref 4eaee87548250b2682affda7d05d947c05554bae
+
+# 日常：给分支名，脚本先解析成 sha 再取件
+python fetch-sources.py --out ./f378 --ref main
+
+# 离线 / 内网镜像：不调 commits API，--ref 原值直接使用
+python fetch-sources.py --out ./f378 --ref main --no-resolve
 ```
+
+**只有钉 sha 才能复现。** `main` 是会动的；同一份 manifest 昨天取、今天取，字节不同也无法证明「不是同一份上游」。
+所以脚本把 `--ref` 解析成一个 commit sha（`GET /repos/openai/math/commits/<ref>`，整轮只解析一次），
+之后**三条通道全部用这个 sha**：`@<sha>` / `/<sha>/` / `?ref=<sha>`。sha 写进 manifest 的 `ref_resolved`，
+两次运行的 `ref_resolved` 相同且 `files[].sha256` 逐条相同，才叫同源。
+
+- 传 40 位十六进制 sha：直接使用，**不发解析请求**（`ref_source: arg-sha`）。
+- 传分支/tag：解析成功即用 sha（`ref_source: api-commit`）。
+- 解析失败（网络错误 / 403 / 404 / 响应非 JSON / 缺 `sha` 字段）：打印 `WARNING: ... NOT byte-pinned`，
+  **退回用户给的原值继续取件**，manifest 记 `ref_resolved: null` + `ref_error` + `ref_source: unresolved`。
+  不静默：这种运行看起来成功，但它**不是**钉版，不能拿去跟别的 manifest 比字节。
+- `--no-resolve`：完全不碰 commits API，`--ref` 原值直接用于三通道，记 `ref_source: no-resolve`；
+  供离线测试和内网镜像使用，`ref_resolved` 为 null（没有 sha 可证）。
+
+**2026-11-11 验证过的 sha：`4eaee87548250b2682affda7d05d947c05554bae`（openai/math `refs/heads/main`）。**
+该 sha 下种子清单 19/19、**1 728 710 字节**，与 9cb9d8c 那次实测的总字节数**逐字节相同**；
+`--ref main`（`ref_source: api-commit`）与 `--ref 4eaee...`（`ref_source: arg-sha`）两轮取件的
+19 条 `sha256` 集合完全一致，这就是「钉版生效」的可观测证据。
 
 **取件量 = 种子清单 + `import OAI.*` 闭包（动态）。** 种子清单是 18 个 Lean/文本文件加 1 个论文 PDF
 （共 19 个；2026-11-11 复核仍为 1 728 710 字节），只是**陈述级人工清单**，够读声明、不够编译：
@@ -25,6 +50,8 @@ python fetch-sources.py --out ./f378
 - 强制只走第三跳（前两跳指向关闭端口）：`--max-modules 0 --timeout 30 --tries 3`，19/19、1 728 710 字节、428.9 s；
   期间 `CONTENTS.md` 遇到一次 `IncompleteRead`（855 172/883 815 字节）被重试成功。该轮 API 侧明显偏慢，不能当基准。
   两次都是退出码 2——`--max-modules 0` 按设计把闭包截断，不是取件失败。
+- 钉版两轮（`--max-modules 0 --timeout 30 --tries 1`）：`--ref 4eaee…` 34.1 s、`--ref main`（现解析成同一 sha）
+  同样 19/19、1 728 710 字节，19 条 `sha256` 完全一致。两轮也都是退出码 2。
 
 | 参数 | 默认 | 语义 |
 |---|---|---|
@@ -32,13 +59,16 @@ python fetch-sources.py --out ./f378
 | `--max-modules` | 400 | 闭包**新增**文件数上限，防止失控拉取；触顶时打印并记为 `truncated`。2026-11-11 实测该族闭包至少 348 个模块（含证明主体），200 会截断，故默认 400 |
 | `--timeout` | 240 | 单请求超时（秒），三个通道各自计时 |
 | `--tries` | 4 | 每通道尝试次数（403/404 不重试） |
+| `--ref` | `main` | 取件的上游 git ref：分支名、tag 或 40 位 commit sha。给 sha 直接使用、不发解析请求；给分支/tag 先解析成 sha 再取件。**跨天复现必须给 sha** |
+| `--no-resolve` | 关 | 跳过 commits API 解析，`--ref` 原值直接用于三通道（离线测试、内网镜像）。此时 `ref_resolved` 为 null，**不构成钉版** |
 | `--no-paper` | 关 | 跳过 `paper.pdf` |
 
-通道按可用性三跳降级，**每跳都要先过内容形状校验才写盘**：
+通道按可用性三跳降级，**每跳都要先过内容形状校验才写盘**。下表的 `<ref>` 是**解析后的钉版值**
+（通常就是 commit sha；只有解析失败或 `--no-resolve` 时才是分支名）：
 
-1. `cdn.jsdelivr.net/gh/openai/math@main/<path>`（快，> 20 MB 拒收）
-2. `raw.githubusercontent.com/openai/math/main/<path>`（权威，易超时）
-3. `api.github.com/repos/openai/math/contents/<path>?ref=main`
+1. `cdn.jsdelivr.net/gh/openai/math@<ref>/<path>`（快，> 20 MB 拒收）
+2. `raw.githubusercontent.com/openai/math/<ref>/<path>`（权威，易超时）
+3. `api.github.com/repos/openai/math/contents/<path>?ref=<ref>`
 
 **为什么第三跳是 contents 而不是 `git/blobs/<sha>`。** 2026-11-11 实测
 `GET /repos/openai/math/git/trees/main?recursive=1` 返回 `truncated: true`（55 173 项、15.1 MB、16.6 s），
@@ -51,7 +81,8 @@ contents 端点按路径直接解析，19 个种子全覆盖，含 887 884 字�
 （blobs 也止于 100 MB），直接报错而不是写半截文件；响应声明的 `size` 与实际字节不符同样按该通道失败。
 
 **限流。** 未认证 `api.github.com` 为 60 次/小时，一次运行约 19+N 次请求（每个文件 1 次，> 1 MB 的文件 2 次；
-本仓没有 > 1 MB 的种子，所以种子部分正好 19 次）。403/429 **立即失败不重试**，错误里写明
+本仓没有 > 1 MB 的种子，所以种子部分正好 19 次）。若 `--ref` 给的是分支名，**另加 1 次**解析请求（整轮只解析一次、
+所有文件复用）；给 40 位 sha 或 `--no-resolve` 时为 0 次。403/429 **立即失败不重试**，错误里写明
 `X-RateLimit-Remaining` 并提示设置 `GITHUB_TOKEN`。token 只作为 `Authorization` 头发送，
 不进 URL、不进日志、不进 manifest。传输层截断（`IncompleteRead`）算可重试错误，报
 `truncated body: N of M bytes read`，所以无 token 时建议 `--tries 2` 以上。
@@ -69,7 +100,20 @@ contents 端点按路径直接解析，19 个种子全覆盖，含 887 884 字�
 
 空响应一律拒绝；未知扩展名按「非空且非 HTML」处理。脚本写两个 JSON：
 
-- `_manifest.json`：逐文件 `remote`/`local`/`bytes`/`sha256`/`channel`，另加 `origin` 与 `via`。
+- `_manifest.json`：**顶层是钉版信息，`files` 是逐文件记录**。
+
+  顶层字段：
+
+  | 字段 | 含义 |
+  |---|---|
+  | `upstream_repo` | 固定 `openai/math` |
+  | `ref_requested` | `--ref` 的原值（分支名、tag 或 sha） |
+  | `ref_resolved` | 实际用于三通道的 40 位 commit sha。**只有真正拿到 sha 时才非空**：`--no-resolve` 与解析失败都是 null |
+  | `ref_resolved_at` | 解析/记录钉版的时间，ISO 8601、UTC、`Z` 后缀（如 `2026-11-11T02:32:15Z`） |
+  | `ref_source` | `arg-sha`（传的就是 sha）/ `api-commit`（commits API 解析而来）/ `no-resolve`（未解析）/ `unresolved`（解析失败，已退回原值） |
+  | `ref_error` | 解析失败原因（已按 token 脱敏：token 一律替换为 `***`）；成功时为 null |
+
+  `files[]` 每条：`remote`/`local`/`bytes`/`sha256`/`channel`，另加 `origin` 与 `via`。
   `channel` 是实际供字节的那一跳（`jsdelivr` / `raw` / `api-contents`）；`via` 按尝试顺序记录每一跳的结果
   （如 `jsdelivr -> URLError: ...`、`raw -> HTTPError: ...`、`api-contents -> ok`），失败记录也留 `via`，
   用来区分「超时」与「取到 HTML 被拒」。
@@ -93,11 +137,17 @@ python -m pytest repro/family378-subexpsat -q
 python -m py_compile repro/family378-subexpsat/fetch-sources.py
 ```
 
-`test_fetch_sources.py` 用 monkeypatch 替掉 `fetch_one` 或 `urllib.request.urlopen`，不联网，覆盖：二级依赖递归、已在盘模块不重拉、
+`test_fetch_sources.py` 用 monkeypatch 替掉 `fetch_one` 或 `urllib.request.urlopen`，不联网，**共 32 例**。覆盖：二级依赖递归、已在盘模块不重拉、
 非 `OAI.` 前缀不拉、`--max-modules` 截断可见、失败进 `failed`、`import` 四种语法变体，
 以及 `--include-imports` 开/关与退出码 `0/1/2`；通道侧覆盖三跳降级顺序（jsdelivr 超时 → raw 404 → api 成功）、
 任一通道返回 HTML 错误页被拒、PDF/JSON/Lean/文本四种形状校验、无 token 时 403 提示且 token 不落 manifest、
 > 1 MB 改走 raw 媒体类型、截断体重试与字节数报错、`size` 不符判失败，以及 manifest 里的 `channel`/`via`。
+
+钉版这一层另有 9 例：传 40 位 sha 时**一次解析请求都不发**且三条通道 URL 里都是该 sha；传 `main` 时
+**整轮只解析 1 次**并被所有文件复用；解析 403 时出 `WARNING`、退回原分支名、manifest 记 `unresolved`；
+响应非 JSON / 缺 `sha` / 非对象时的错误路径；manifest 五个 ref 字段齐全且 `ref_resolved_at` 可解析为 UTC；
+token 只出现在 `Authorization` 头、**不进 manifest 也不进 WARNING**（响应体回显 token 的极端情况也被脱敏）；
+`--no-resolve` 不碰 commits API 且记 `no-resolve`。
 
 ## 二、一键核查
 
