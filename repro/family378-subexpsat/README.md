@@ -167,11 +167,23 @@ python check-gap.py --src ./f378
 
 2026-10-30 实测：`checks: 24, FAIL: 0, confirmed gaps: 1`（C23）。
 
+2026-11-11 实测（取件面扩到 2088 个 Lean 模块）：`checks: 24, FAIL: 0, confirmed gaps: 1`，
+C11 仍为 PART，但数字才有意义：`330 unresolved imports over 2088 fetched modules (290 distinct missing modules)`。
+原因见下节：**C11 原先把斜杠路径当模块名比较，任何带 `OAI.*` import 的树都必然 PART**。
+
+多轮取件另有两个辅助脚本（不参与核对项计数，属取件与取证侧）：
+`seal-manifest.py` 把落盘树逐文件 sha256 封存成一份完整 `_manifest.json`（C1 由“本轮取件”升为“全树”）；
+`closure-frontier.py` 列出缺失模块，用 `Range: bytes=0-0` 探测 URL 与字节数，输出可引用的阻塞清单 TSV。
+
 ## 三、怎么读结果
 
 - **PASS** = 机械检查成立（文本、字形、哈希、数值层面的可复算事实）。
-- **PART** = 结论受取件范围所限（如 C11：用 `--no-include-imports` 只取种子清单时，import 无法在子集内闭合）。
-  默认开着闭包取件时，C11 应在闭包完整时 PASS；若 `_closure.json` 是 `partial`/`truncated`，C11 仍可能是 PART。
+- **PART** = 结论受取件范围所限。C11 属于这一类：它逐条核对 `import OAI.*` 是否落在已落盘树内。
+  2026-11-11 之前的实现把已取集合存成 `OAI/.../Final` 斜杠路径、却用 `OAI.Algorithms...Final` 点号名比较，
+  两者永不相等，于是**任何树都是 PART**，与取多少件无关；修复后（`check-gap.py` C11 段）缺口数字才有意义。
+  当前状态：2088 个模块，330 条未解析 import、290 个缺失模块（全部在 `OAI.Algorithms.SubexponentialSAT.*` 内，
+  族外 0 条），290 个模块经 Range 探测全部返回 206 —— 属“还没取完”，不是“取不到”，清单见
+  `c11-frontier-20261111.tsv`，复跑命令见 `radar/2026-11-11-fifth-pass.md` 第五节。
 - **GAP** = 确认为形式化差距（C23：`m ≤ Dn` 锐化界 `2^{O(n/√log n)}` 在取件范围内无任何对应陈述）。
 
 C19「挑战陈述 ≡ 解法陈述」目前是**文本等价**：挑战文件与解法文件中 `exact_count_and_sat` 的类型部分逐字相同（1 124 字符）。

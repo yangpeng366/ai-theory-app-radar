@@ -160,6 +160,30 @@ def sorry_count(text):
     return len(re.findall(r"(?<![A-Za-z0-9_])sorry(?![A-Za-z0-9_])", text))
 
 
+LEAN_IMPORT = re.compile(
+    r"^[ \t]*(?:(?:public|private|meta)[ \t]+)*import[ \t]+(.+?)[ \t]*$", re.M)
+LEAN_BLOCK_COMMENT = re.compile(r"/-.*?-/", re.S)
+LEAN_MODULE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.]*")
+
+
+def lean_imports(text):
+    """Every module bound by an `import` line.
+
+    Lean accepts `import A B`, `public import A`, `meta import A` and
+    `import all A`; all four bind modules, and a line may name more than one, so
+    the whole clause is split into tokens instead of taking only the first name.
+    """
+    body = LEAN_BLOCK_COMMENT.sub(" ", text)
+    names = []
+    for clause in LEAN_IMPORT.findall(body):
+        for token in clause.split("--", 1)[0].split():
+            if token == "all":
+                continue
+            if LEAN_MODULE_NAME.fullmatch(token):
+                names.append(token)
+    return names
+
+
 # ------------------------------------------------- stage 1: data consistency
 
 def stage1(src):
@@ -293,26 +317,34 @@ def stage1(src):
                "%d/%d shared definitions are semantically identical%s"
                % (len(comparable), len(comparable), note))
 
-    # C11: import closure inside the fetched subset.
-    fetched = set()
+    # C11: import closure inside the fetched subset.  The key must be the dotted
+    # module name (`OAI.Algorithms.SubexponentialSAT.Main`), because that is what
+    # an `import` line names.  Keying the fetched set by slash paths makes every
+    # OAI import look unresolved, i.e. the check could never return PASS.
+    fetched = {}
     for root, _dirs, names in os.walk(os.path.join(src, "lean")):
         for name in names:
             if name.endswith(".lean"):
                 rel = os.path.relpath(os.path.join(root, name),
                                       os.path.join(src, "lean")).replace(os.sep, "/")
-                fetched.add(rel[:-len(".lean")])
+                fetched[rel[:-len(".lean")].replace("/", ".")] = rel
     unresolved = []
-    for rel in sorted(fetched):
-        text = read(os.path.join(src, "lean", rel.replace("/", os.sep) + ".lean"))
-        for module in re.findall(r"^import\s+([A-Za-z0-9_.]+)", text, re.M):
-            if module.startswith("OAI.") and module not in fetched:
-                unresolved.append("%s -> %s" % (rel, module))
+    for module, rel in sorted(fetched.items()):
+        text = read(os.path.join(src, "lean", rel.replace("/", os.sep)))
+        for imported in lean_imports(text):
+            if imported.startswith("OAI.") and imported not in fetched:
+                unresolved.append((module, imported))
+    missing = sorted({imported for _module, imported in unresolved})
     if unresolved:
-        record("C11 import 闭合", "PART", "%d imports outside the fetched subset "
-                                       "(proof bulk not fetched): %s"
-               % (len(unresolved), "; ".join(unresolved[:3])))
+        record("C11 import 闭合", "PART",
+               "%d unresolved imports over %d fetched modules (%d distinct missing "
+               "modules): %s"
+               % (len(unresolved), len(fetched), len(missing),
+                  "; ".join("%s -> %s" % pair for pair in unresolved[:3])))
     else:
-        record("C11 import 闭合", "PASS", "every OAI import resolves inside the fetched subset")
+        record("C11 import 闭合", "PASS",
+               "every OAI import resolves inside the fetched subset (%d modules)"
+               % len(fetched))
 
     return {"contents": contents, "comparator": comparator, "final": final,
             "config": config, "yaml": yaml_text,
