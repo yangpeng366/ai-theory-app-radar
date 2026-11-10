@@ -6,20 +6,58 @@
 
 ## 一、取件
 
-```bash
-python3 fetch-sources.py --out ./f378
+```powershell
+python fetch-sources.py --out ./f378
 ```
 
-取件清单（19 个文件 / 1 728 710 字节）：上游 `preprints/The-Exponential-Time-Hypothesis-is-False-October-25-2026/paper.pdf`，
-`lean/OAI/Algorithms/SubexponentialSAT/` 下 12 个 Lean 模块，`lean/ComparatorChallenges/SubexponentialSAT.{lean,json}`，
-`lean/docs/378.md`，`lean/formalization.yaml`，`lean/lean-toolchain`，以及仓根的 `CONTENTS.md` 与 `history.md`。
+**取件量 = 种子清单 + `import OAI.*` 闭包（动态）。** 种子清单是 18 个 Lean/文本文件加 1 个论文 PDF
+（共 19 个；2026-11-11 复核仍为 1 728 710 字节），只是**陈述级人工清单**，够读声明、不够编译：
+上游 `preprints/…/paper.pdf`，`lean/OAI/Algorithms/SubexponentialSAT/` 下 12 个模块，
+`lean/ComparatorChallenges/SubexponentialSAT.{lean,json}`，`lean/docs/378.md`，`lean/formalization.yaml`，
+`lean/lean-toolchain`，以及仓根 `CONTENTS.md` 与 `history.md`。
 
-通道按可用性降级：`cdn.jsdelivr.net` → `raw.githubusercontent.com`；脚本输出 `_manifest.json`（含逐文件 sha256）。
+默认还会按源码里的 `import` 递归补齐闭包，因此**最终文件数不写死**：它随上游改动和 `--max-modules` 变化，
+以脚本末行 `fetched x/y files` 与 `_closure.json` 为准。
+
+| 参数 | 默认 | 语义 |
+|---|---|---|
+| `--include-imports` / `--no-include-imports` | **开** | 是否递归拉齐 `import OAI.*` 闭包。默认开：种子清单缺证明主体模块，关掉后树不可编译、C11 必然是 PART |
+| `--max-modules` | 400 | 闭包**新增**文件数上限，防止失控拉取；触顶时打印并记为 `truncated`。2026-11-11 实测该族闭包至少 348 个模块（含证明主体），200 会截断，故默认 400 |
+| `--timeout` | 240 | 单请求超时（秒），两个通道各自计时 |
+| `--tries` | 4 | 每通道尝试次数 |
+| `--no-paper` | 关 | 跳过 `paper.pdf` |
+
+通道按可用性降级：`cdn.jsdelivr.net` → `raw.githubusercontent.com`。脚本写两个 JSON：
+
+- `_manifest.json`：逐文件 `remote`/`local`/`bytes`/`sha256`/`channel`，另加 `origin`。
+  `origin="seed"` 表示种子清单里的文件；`origin="import"` 表示闭包新增，这类记录还带 `module`（Lean 模块名）
+  与 `imported_by`（哪些模块 import 了它），所以闭包可复现、可追责。**只有成功取到的文件进 manifest**，
+  失败项不进（否则指向不存在的文件会破坏 C1 校验）。
+- `_closure.json`：`status` ∈ `complete` / `partial` / `truncated` / `skipped`，`complete` 布尔，`seed_files`、
+  `seed_fetched`、`imported_files`、`failed`（模块名 + 通道错误 + 谁 import 的）、`not_fetched`（被 `--max-modules` 截住的剩余队列）。
+
+退出码：`0` 全成功且闭包完整；`1` 有取件失败（种子或闭包，闭包因此不完整）；`2` 被 `--max-modules` 截断；
+失败与截断同时出现按 `1` 报。**部分闭包不会静默成功**。
+
+中断与重跑：manifest 只登记**本次运行**取到的文件，`--out` 里已有但未登记的旧文件不会被重新计入；
+中断后建议换空目录重跑。种子清单在闭包开始前就先写一次 `_manifest.json`，
+所以长闭包被中断时至少留下种子部分的 sha256。
+
+### 取件脚本的离线测试
+
+```powershell
+python -m pytest repro/family378-subexpsat -q
+python -m py_compile repro/family378-subexpsat/fetch-sources.py
+```
+
+`test_fetch_sources.py` 用 monkeypatch 替掉 `fetch_one`，不联网，覆盖：二级依赖递归、已在盘模块不重拉、
+非 `OAI.` 前缀不拉、`--max-modules` 截断可见、失败进 `failed`、`import` 四种语法变体，
+以及 `--include-imports` 开/关与退出码 `0/1/2`。
 
 ## 二、一键核查
 
-```bash
-python3 check-gap.py --src ./f378
+```powershell
+python check-gap.py --src ./f378
 ```
 
 不需要 Lean 工具链，不需要 Mathlib，全部结论可由已发布源件回答。脚本分三段共 24 项检查：
@@ -37,7 +75,8 @@ python3 check-gap.py --src ./f378
 ## 三、怎么读结果
 
 - **PASS** = 机械检查成立（文本、字形、哈希、数值层面的可复算事实）。
-- **PART** = 结论受取件范围所限（如 C11：证明主体模块未取件，import 无法在子集内闭合）。
+- **PART** = 结论受取件范围所限（如 C11：用 `--no-include-imports` 只取种子清单时，import 无法在子集内闭合）。
+  默认开着闭包取件时，C11 应在闭包完整时 PASS；若 `_closure.json` 是 `partial`/`truncated`，C11 仍可能是 PART。
 - **GAP** = 确认为形式化差距（C23：`m ≤ Dn` 锐化界 `2^{O(n/√log n)}` 在取件范围内无任何对应陈述）。
 
 C19「挑战陈述 ≡ 解法陈述」目前是**文本等价**：挑战文件与解法文件中 `exact_count_and_sat` 的类型部分逐字相同（1 124 字符）。
