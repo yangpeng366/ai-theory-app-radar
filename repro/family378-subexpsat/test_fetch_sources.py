@@ -8,10 +8,16 @@ Run from the repository root:
     python -m pytest repro/family378-subexpsat -q
 """
 
+import base64
 import hashlib
+import http.client
 import importlib.util
+import io
 import json
 import os
+import urllib.error
+
+import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "fetch-sources.py")
@@ -255,3 +261,343 @@ def test_main_seed_only_is_flagged_as_skipped(tmp_path, monkeypatch, capsys):
     closure = json.load(open(os.path.join(out, "_closure.json"), encoding="utf-8"))
     assert closure["status"] == "skipped"
     assert closure["complete"] is False
+
+
+# ------------------------------------------- channels (jsdelivr -> raw -> api)
+
+LEAN = b"import OAI.B\n\ntheorem t : True := trivial\n"
+HTML_PAGE = (b"<!DOCTYPE html><html><head><title>429 Too Many Requests</title>"
+             b"</head><body>rate limited</body></html>")
+
+
+class FakeResponse:
+    """Just enough of http.client.HTTPResponse for urlopen's context protocol."""
+
+    def __init__(self, body, headers=None, status=200):
+        self._body = body
+        self.headers = headers or {"X-RateLimit-Remaining": "55"}
+        self.status = status
+
+    def read(self, amount=None):
+        return self._body if amount is None else self._body[:amount]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def close(self):
+        return None
+
+
+class TruncatedResponse(FakeResponse):
+    """A 200 whose body stops before Content-Length; urllib raises IncompleteRead."""
+
+    def __init__(self, partial_bytes, expected):
+        FakeResponse.__init__(self, b"")
+        self._partial = b"x" * partial_bytes
+        self._expected = expected
+
+    def read(self, amount=None):
+        raise http.client.IncompleteRead(self._partial, self._expected)
+
+
+def install_transport(monkeypatch, handler):
+    """Monkeypatch urllib.request.urlopen and record every request."""
+    calls = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append({"url": request.full_url,
+                      "accept": request.get_header("Accept"),
+                      "auth": request.get_header("Authorization")})
+        result = handler(request.full_url, request.get_header("Accept"))
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(fs.urllib.request, "urlopen", fake_urlopen)
+    return calls
+
+
+def contents_payload(blob, size=None, encoding="base64"):
+    return json.dumps({
+        "type": "file",
+        "size": len(blob) if size is None else size,
+        "encoding": encoding,
+        "content": base64.b64encode(blob).decode("ascii") if blob else "",
+        "sha": "0" * 40,
+    }).encode("utf-8")
+
+
+def channel_of(url):
+    if "cdn.jsdelivr.net" in url:
+        return "jsdelivr"
+    if "raw.githubusercontent.com" in url:
+        return "raw"
+    if "api.github.com" in url:
+        return "api-contents"
+    raise AssertionError("unexpected url %s" % url)
+
+
+def test_three_channel_degradation_jsdelivr_timeout_raw_404_api_ok(tmp_path, monkeypatch):
+    remote = "lean/OAI/A.lean"
+
+    def handler(url, _accept):
+        where = channel_of(url)
+        if where == "jsdelivr":
+            return TimeoutError("timed out")
+        if where == "raw":
+            return urllib.error.HTTPError(url, 404, "Not Found", {},
+                                          io.BytesIO(b"404: Not Found"))
+        return FakeResponse(contents_payload(LEAN))
+
+    calls = install_transport(monkeypatch, handler)
+    record = fs.fetch_one(remote, remote, str(tmp_path), timeout=1, tries=1)
+
+    assert [channel_of(call["url"]) for call in calls] == [
+        "jsdelivr", "raw", "api-contents"]
+    assert record["channel"] == "api-contents"
+    assert record["bytes"] == len(LEAN)
+    assert record["via"][0].startswith("jsdelivr -> TimeoutError")
+    assert record["via"][1].startswith("raw -> HTTPError")
+    assert record["via"] == [record["via"][0], record["via"][1], "api-contents -> ok"]
+    saved = open(os.path.join(str(tmp_path), "lean", "OAI", "A.lean"), "rb").read()
+    assert saved == LEAN
+    assert record["sha256"] == hashlib.sha256(LEAN).hexdigest()
+
+
+@pytest.mark.parametrize("bad", ["jsdelivr", "raw", "api-contents"])
+def test_html_error_page_is_rejected_on_any_channel(tmp_path, monkeypatch, bad):
+    remote = "lean/OAI/A.lean"
+
+    def handler(url, _accept):
+        where = channel_of(url)
+        if where == bad:
+            page = HTML_PAGE
+        elif bad == "api-contents":
+            return urllib.error.HTTPError(url, 404, "Not Found", {},
+                                          io.BytesIO(b"404"))
+        else:
+            page = LEAN
+        if where == "api-contents":
+            return FakeResponse(contents_payload(page))
+        return FakeResponse(page)
+
+    install_transport(monkeypatch, handler)
+    record = fs.fetch_one(remote, remote, str(tmp_path), timeout=1, tries=1)
+
+    if bad == "api-contents":
+        assert record["channel"] is None
+        assert "疑似错误页" in record["errors"][-1]
+        assert "first 80 bytes=b'<!DOCTYPE html>" in record["errors"][-1]
+        assert not os.path.exists(os.path.join(str(tmp_path), "lean", "OAI", "A.lean"))
+    else:
+        assert record["channel"] not in (None, bad)
+        saved = open(os.path.join(str(tmp_path), "lean", "OAI", "A.lean"), "rb").read()
+        assert saved == LEAN
+
+
+def test_all_three_html_error_pages_fail_closed(tmp_path, monkeypatch):
+    remote = "lean/docs/378.md"
+
+    def handler(url, _accept):
+        if channel_of(url) == "api-contents":
+            return FakeResponse(contents_payload(HTML_PAGE))
+        return FakeResponse(HTML_PAGE)
+
+    install_transport(monkeypatch, handler)
+    record = fs.fetch_one(remote, remote, str(tmp_path), timeout=1, tries=1)
+
+    assert record["channel"] is None
+    assert record["bytes"] is None
+    assert len(record["errors"]) == 3
+    assert all("疑似错误页" in error for error in record["errors"])
+    assert [via.split(" -> ")[0] for via in record["via"]] == [
+        "jsdelivr", "raw", "api-contents"]
+    assert not os.path.exists(os.path.join(str(tmp_path), "lean", "docs", "378.md"))
+
+
+def test_validate_content_shapes():
+    # .lean: UTF-8 and not HTML
+    fs.validate_content("lean/OAI/A.lean", "theorem t : True := trivial\n".encode())
+    with pytest.raises(fs.ChannelError) as error:
+        fs.validate_content("lean/OAI/A.lean", b"\xff\xfe\x00bad utf-8")
+    assert "非 UTF-8" in str(error.value)
+    with pytest.raises(fs.ChannelError) as error:
+        fs.validate_content("lean/OAI/A.lean", HTML_PAGE)
+    assert "疑似错误页" in str(error.value)
+
+    # .json: must json.loads
+    fs.validate_content("lean/ComparatorChallenges/SubexponentialSAT.json", b'{"a": 1}')
+    with pytest.raises(fs.ChannelError) as error:
+        fs.validate_content("lean/ComparatorChallenges/SubexponentialSAT.json",
+                            b'{"a": 1,}')
+    assert "json.loads" in str(error.value)
+
+    # .pdf: must start with %PDF-
+    fs.validate_content("p/paper.pdf", b"%PDF-1.7\n%\xd0\xd4\n")
+    with pytest.raises(fs.ChannelError) as error:
+        fs.validate_content("p/paper.pdf", b"<html>not a pdf</html>")
+    assert "%PDF-" in str(error.value)
+
+    # .md / _toolchain / .yaml: non-empty and not HTML
+    fs.validate_content("lean/docs/378.md", b"# The Exponential Time Hypothesis\n")
+    fs.validate_content("lean/lean-toolchain", b"leanprover/lean4:v4.20.0\n")
+    fs.validate_content("lean/formalization.yaml", b"# yaml-language-server: $schema=x\n")
+    with pytest.raises(fs.ChannelError) as error:
+        fs.validate_content("lean/formalization.yaml", b"")
+    assert "empty body" in str(error.value)
+    with pytest.raises(fs.ChannelError) as error:
+        fs.validate_content("lean/docs/378.md", b"\n  <!doctype html><html></html>")
+    assert "疑似错误页" in str(error.value)
+
+
+def test_api_403_is_recognisable_and_never_leaks_the_token(tmp_path, monkeypatch):
+    remote = "lean/OAI/A.lean"
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_SECRET_SENTINEL_123")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    body = b'{"message":"API rate limit exceeded for 1.2.3.4"}'
+
+    def handler(url, _accept):
+        where = channel_of(url)
+        if where == "api-contents":
+            return urllib.error.HTTPError(url, 403, "rate limit exceeded",
+                                          {"X-RateLimit-Remaining": "0"},
+                                          io.BytesIO(body))
+        return TimeoutError("timed out")
+
+    calls = install_transport(monkeypatch, handler)
+    monkeypatch.setattr(fs.time, "sleep", lambda *_: None)  # tries=4 must not stall the suite
+    record = fs.fetch_one(remote, remote, str(tmp_path), timeout=1, tries=4)
+
+    api_calls = [call for call in calls if channel_of(call["url"]) == "api-contents"]
+    assert len(api_calls) == 1  # 403 is not retried
+    assert api_calls[0]["auth"] == "Bearer ghp_SECRET_SENTINEL_123"
+    assert record["channel"] is None
+    message = record["errors"][-1]
+    assert "403" in message and "GITHUB_TOKEN" in message
+    assert "60 requests/hour" in message
+    assert "X-RateLimit-Remaining=0" in message
+    assert "ghp_SECRET_SENTINEL_123" not in json.dumps(record, ensure_ascii=False)
+
+
+def test_api_contents_over_1mb_switches_to_raw_media_type(tmp_path, monkeypatch):
+    remote = "preprints/paper.pdf"
+    size = 1_500_000
+    pdf = b"%PDF-1.7\n" + b"0" * (size - len(b"%PDF-1.7\n"))
+
+    def handler(url, accept):
+        if channel_of(url) != "api-contents":
+            return urllib.error.HTTPError(url, 404, "Not Found", {},
+                                          io.BytesIO(b"404"))
+        if accept.endswith("application/vnd.github.raw"):
+            return FakeResponse(pdf)
+        # 1 MB+: GitHub returns the object form with no inline content
+        return FakeResponse(contents_payload(b"", size=size, encoding="none"))
+
+    calls = install_transport(monkeypatch, handler)
+    record = fs.fetch_one(remote, remote, str(tmp_path), timeout=1, tries=1)
+
+    accepts = [call["accept"] for call in calls if channel_of(call["url"]) == "api-contents"]
+    assert len(accepts) == 2
+    assert accepts[0] == "application/vnd.github+json"
+    assert accepts[1] == "application/vnd.github.raw"
+    assert record["channel"] == "api-contents"
+    assert record["bytes"] == size
+    saved = open(os.path.join(str(tmp_path), "preprints", "paper.pdf"), "rb").read()
+    assert saved.startswith(b"%PDF-") and len(saved) == size
+
+
+def test_api_contents_inline_640kb_text_is_decoded_without_second_request(tmp_path, monkeypatch):
+    remote = "CONTENTS.md"
+    blob = b"# Mathematics\n" + b"x" * 640_900
+
+    def handler(url, _accept):
+        if channel_of(url) != "api-contents":
+            return TimeoutError("timed out")
+        return FakeResponse(contents_payload(blob))
+
+    calls = install_transport(monkeypatch, handler)
+    record = fs.fetch_one(remote, remote, str(tmp_path), timeout=1, tries=1)
+
+    api_calls = [call for call in calls if channel_of(call["url"]) == "api-contents"]
+    assert len(api_calls) == 1  # 640 KB < 1 MB stays inline
+    assert record["channel"] == "api-contents"
+    assert record["bytes"] == len(blob)
+
+
+def test_api_truncated_body_is_retried_then_succeeds(tmp_path, monkeypatch):
+    remote = "CONTENTS.md"
+    blob = b"# Mathematics\n" + b"x" * 1000
+    state = {"api": 0}
+
+    def handler(url, _accept):
+        if channel_of(url) != "api-contents":
+            return TimeoutError("timed out")
+        state["api"] += 1
+        if state["api"] == 1:
+            return TruncatedResponse(500, 500)
+        return FakeResponse(contents_payload(blob))
+
+    install_transport(monkeypatch, handler)
+    monkeypatch.setattr(fs.time, "sleep", lambda *_: None)
+    record = fs.fetch_one(remote, remote, str(tmp_path), timeout=1, tries=2)
+
+    assert state["api"] == 2  # the truncated 200 was retried, not written
+    assert record["channel"] == "api-contents"
+    assert record["bytes"] == len(blob)
+
+
+def test_api_truncated_body_reports_bytes_read(tmp_path, monkeypatch):
+    remote = "CONTENTS.md"
+
+    def handler(url, _accept):
+        if channel_of(url) != "api-contents":
+            return TimeoutError("timed out")
+        return TruncatedResponse(500, 500)
+
+    install_transport(monkeypatch, handler)
+    record = fs.fetch_one(remote, remote, str(tmp_path), timeout=1, tries=1)
+
+    assert record["channel"] is None
+    assert "truncated body: 500 of 1000 bytes read" in record["errors"][-1]
+    assert not os.path.exists(os.path.join(str(tmp_path), "CONTENTS.md"))
+
+
+def test_api_contents_size_mismatch_is_a_failed_hop(tmp_path, monkeypatch):
+    remote = "lean/OAI/A.lean"
+
+    def handler(url, _accept):
+        if channel_of(url) != "api-contents":
+            return TimeoutError("timed out")
+        return FakeResponse(contents_payload(LEAN, size=len(LEAN) + 7))
+
+    install_transport(monkeypatch, handler)
+    record = fs.fetch_one(remote, remote, str(tmp_path), timeout=1, tries=1)
+
+    assert record["channel"] is None
+    assert "size mismatch" in record["errors"][-1]
+    assert not os.path.exists(os.path.join(str(tmp_path), "lean", "OAI", "A.lean"))
+
+
+def test_manifest_records_api_channel_and_via(tmp_path, monkeypatch, capsys):
+    seed = "lean/OAI/A.lean"
+    monkeypatch.setattr(fs, "FILES", [(seed, seed)])
+
+    def handler(url, _accept):
+        if channel_of(url) == "api-contents":
+            return FakeResponse(contents_payload(b"def a := 1\n"))
+        return TimeoutError("timed out")
+
+    install_transport(monkeypatch, handler)
+    out = str(tmp_path / "out")
+
+    code = fs.main(["--out", out, "--no-paper", "--no-include-imports", "--tries", "1"])
+
+    assert code == 0
+    manifest = json.load(open(os.path.join(out, "_manifest.json"), encoding="utf-8"))
+    assert manifest[0]["channel"] == "api-contents"
+    assert [entry.split(" -> ")[0] for entry in manifest[0]["via"]] == [
+        "jsdelivr", "raw", "api-contents"]
+    assert manifest[0]["via"][-1] == "api-contents -> ok"

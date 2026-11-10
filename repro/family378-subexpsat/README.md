@@ -19,17 +19,60 @@ python fetch-sources.py --out ./f378
 默认还会按源码里的 `import` 递归补齐闭包，因此**最终文件数不写死**：它随上游改动和 `--max-modules` 变化，
 以脚本末行 `fetched x/y files` 与 `_closure.json` 为准。
 
+2026-11-11 两条实测回执（同一台 Windows 机器）：
+
+- 三跳正常：`--max-modules 0 --timeout 30 --tries 1`，19/19、1 728 710 字节、64.2 s；其中 4 个文件 jsdelivr 失败后由 raw 补齐。
+- 强制只走第三跳（前两跳指向关闭端口）：`--max-modules 0 --timeout 30 --tries 3`，19/19、1 728 710 字节、428.9 s；
+  期间 `CONTENTS.md` 遇到一次 `IncompleteRead`（855 172/883 815 字节）被重试成功。该轮 API 侧明显偏慢，不能当基准。
+  两次都是退出码 2——`--max-modules 0` 按设计把闭包截断，不是取件失败。
+
 | 参数 | 默认 | 语义 |
 |---|---|---|
 | `--include-imports` / `--no-include-imports` | **开** | 是否递归拉齐 `import OAI.*` 闭包。默认开：种子清单缺证明主体模块，关掉后树不可编译、C11 必然是 PART |
 | `--max-modules` | 400 | 闭包**新增**文件数上限，防止失控拉取；触顶时打印并记为 `truncated`。2026-11-11 实测该族闭包至少 348 个模块（含证明主体），200 会截断，故默认 400 |
-| `--timeout` | 240 | 单请求超时（秒），两个通道各自计时 |
-| `--tries` | 4 | 每通道尝试次数 |
+| `--timeout` | 240 | 单请求超时（秒），三个通道各自计时 |
+| `--tries` | 4 | 每通道尝试次数（403/404 不重试） |
 | `--no-paper` | 关 | 跳过 `paper.pdf` |
 
-通道按可用性降级：`cdn.jsdelivr.net` → `raw.githubusercontent.com`。脚本写两个 JSON：
+通道按可用性三跳降级，**每跳都要先过内容形状校验才写盘**：
 
-- `_manifest.json`：逐文件 `remote`/`local`/`bytes`/`sha256`/`channel`，另加 `origin`。
+1. `cdn.jsdelivr.net/gh/openai/math@main/<path>`（快，> 20 MB 拒收）
+2. `raw.githubusercontent.com/openai/math/main/<path>`（权威，易超时）
+3. `api.github.com/repos/openai/math/contents/<path>?ref=main`
+
+**为什么第三跳是 contents 而不是 `git/blobs/<sha>`。** 2026-11-11 实测
+`GET /repos/openai/math/git/trees/main?recursive=1` 返回 `truncated: true`（55 173 项、15.1 MB、16.6 s），
+19 个种子里有 4 个（`lean/lean-toolchain`、`lean/formalization.yaml`、`lean/docs/378.md`、`paper.pdf`）
+**不在 tree 里**，所以「路径 → sha」缓存无法覆盖种子清单；`git/blobs/<sha>` 这条路在本仓不成立。
+contents 端点按路径直接解析，19 个种子全覆盖，含 887 884 字节 PDF 与 640 943 字节 `CONTENTS.md`。
+
+**1 MB 边界。** contents 只在 1 MB 以下内联 base64；1–100 MB 返回 `encoding: "none"` + 空 `content`，
+脚本用同一路径加 `Accept: application/vnd.github.raw` 重取原始字节。> 100 MB 没有 API 通路
+（blobs 也止于 100 MB），直接报错而不是写半截文件；响应声明的 `size` 与实际字节不符同样按该通道失败。
+
+**限流。** 未认证 `api.github.com` 为 60 次/小时，一次运行约 19+N 次请求（每个文件 1 次，> 1 MB 的文件 2 次；
+本仓没有 > 1 MB 的种子，所以种子部分正好 19 次）。403/429 **立即失败不重试**，错误里写明
+`X-RateLimit-Remaining` 并提示设置 `GITHUB_TOKEN`。token 只作为 `Authorization` 头发送，
+不进 URL、不进日志、不进 manifest。传输层截断（`IncompleteRead`）算可重试错误，报
+`truncated body: N of M bytes read`，所以无 token 时建议 `--tries 2` 以上。
+
+**内容校验（fail-closed）。** 200 不等于成功：jsDelivr 与 raw 都会用 200 返回 HTML 错误页/限流页。
+脚本按**请求路径的扩展名**断言真实形状，不通过即视为该通道失败并继续下一跳，错误里带
+「疑似错误页」与前 80 字节：
+
+| 扩展名 | 断言 |
+|---|---|
+| `.lean` | 严格 UTF-8 解码成功，且不含 `<!DOCTYPE`/`<html>` |
+| `.json` | 能 `json.loads` |
+| `.pdf` | 以 `%PDF-` 开头 |
+| `.md` / `.yaml` / `lean-toolchain` | 非空且非 HTML |
+
+空响应一律拒绝；未知扩展名按「非空且非 HTML」处理。脚本写两个 JSON：
+
+- `_manifest.json`：逐文件 `remote`/`local`/`bytes`/`sha256`/`channel`，另加 `origin` 与 `via`。
+  `channel` 是实际供字节的那一跳（`jsdelivr` / `raw` / `api-contents`）；`via` 按尝试顺序记录每一跳的结果
+  （如 `jsdelivr -> URLError: ...`、`raw -> HTTPError: ...`、`api-contents -> ok`），失败记录也留 `via`，
+  用来区分「超时」与「取到 HTML 被拒」。
   `origin="seed"` 表示种子清单里的文件；`origin="import"` 表示闭包新增，这类记录还带 `module`（Lean 模块名）
   与 `imported_by`（哪些模块 import 了它），所以闭包可复现、可追责。**只有成功取到的文件进 manifest**，
   失败项不进（否则指向不存在的文件会破坏 C1 校验）。
@@ -50,9 +93,11 @@ python -m pytest repro/family378-subexpsat -q
 python -m py_compile repro/family378-subexpsat/fetch-sources.py
 ```
 
-`test_fetch_sources.py` 用 monkeypatch 替掉 `fetch_one`，不联网，覆盖：二级依赖递归、已在盘模块不重拉、
+`test_fetch_sources.py` 用 monkeypatch 替掉 `fetch_one` 或 `urllib.request.urlopen`，不联网，覆盖：二级依赖递归、已在盘模块不重拉、
 非 `OAI.` 前缀不拉、`--max-modules` 截断可见、失败进 `failed`、`import` 四种语法变体，
-以及 `--include-imports` 开/关与退出码 `0/1/2`。
+以及 `--include-imports` 开/关与退出码 `0/1/2`；通道侧覆盖三跳降级顺序（jsdelivr 超时 → raw 404 → api 成功）、
+任一通道返回 HTML 错误页被拒、PDF/JSON/Lean/文本四种形状校验、无 token 时 403 提示且 token 不落 manifest、
+> 1 MB 改走 raw 媒体类型、截断体重试与字节数报错、`size` 不符判失败，以及 manifest 里的 `channel`/`via`。
 
 ## 二、一键核查
 
