@@ -143,11 +143,14 @@ python -m py_compile repro/family378-subexpsat/fetch-sources.py
 任一通道返回 HTML 错误页被拒、PDF/JSON/Lean/文本四种形状校验、无 token 时 403 提示且 token 不落 manifest、
 > 1 MB 改走 raw 媒体类型、截断体重试与字节数报错、`size` 不符判失败，以及 manifest 里的 `channel`/`via`。
 
-钉版这一层另有 9 例：传 40 位 sha 时**一次解析请求都不发**且三条通道 URL 里都是该 sha；传 `main` 时
+钉版这一层占其中 9 例：传 40 位 sha 时**一次解析请求都不发**且三条通道 URL 里都是该 sha；传 `main` 时
 **整轮只解析 1 次**并被所有文件复用；解析 403 时出 `WARNING`、退回原分支名、manifest 记 `unresolved`；
 响应非 JSON / 缺 `sha` / 非对象时的错误路径；manifest 五个 ref 字段齐全且 `ref_resolved_at` 可解析为 UTC；
 token 只出现在 `Authorization` 头、**不进 manifest 也不进 WARNING**（响应体回显 token 的极端情况也被脱敏）；
 `--no-resolve` 不碰 commits API 且记 `no-resolve`。
+
+整个目录另由 `conftest.py` 兜底：任何非 loopback 的 socket 连接与 DNS 查询在测试期间都被拒绝，
+`test_offline_guard.py` 用 2 例证明这道闸门本身有效；加上 `test_check_gap.py` 的 3 例，`python -m pytest repro/family378-subexpsat -q` 共 37 例。
 
 ## 二、一键核查
 

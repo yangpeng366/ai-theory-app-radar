@@ -50,6 +50,34 @@ AI math output arrives faster than human review. The gap is no longer solving, i
 
 Reproduction scripts live in [`repro/`](repro/); conclusions always ship with the upstream scope statement attached.
 
+## Verify the review tooling
+
+CI is [`.github/workflows/verify.yml`](.github/workflows/verify.yml). It runs four independent gates, each of which can fail on its own, and none of them fetch the upstream review set:
+
+| Gate | Command (local) | What it proves |
+|---|---|---|
+| offline self-test | `python -m pytest repro/family378-subexpsat -q` | the fetch/closure/C16 logic still behaves (37 cases, 0 network) |
+| encoding | `python tools/check_repo_encoding.py` | every tracked file is UTF-8 and BOM-free, per `AGENTS.md` |
+| static | `ruff check repro tools` and `python -m compileall -q repro tools` | no syntax error, no undefined name |
+| contract | `python tools/check_check_contract.py` | C1..C24 map one-to-one to `check-gap.py`, every cited id exists, the fetch is pinned |
+
+Run all four from the repository root; the whole set takes about a second. The review scripts use the standard library only, so `pytest` and `ruff` are the only installs (the workflow pins their versions).
+
+### Verify without network access
+
+`repro/family378-subexpsat/conftest.py` refuses every non-loopback socket connect and DNS lookup for the duration of each test, and `test_offline_guard.py` proves the guard bites. So "the tools are verifiable offline" is enforced, not promised: a test that starts reaching for `cdn.jsdelivr.net` fails instead of downloading. `fetch-sources.py` itself never runs in CI; its transport is replaced by in-memory fakes, and `--no-resolve` is what the tests use to keep the ref from moving.
+
+### Upstream commit behind the review set
+
+The 2026-11-11 family-378 review set was taken from **`openai/math` @ `4eaee87548250b2682affda7d05d947c05554bae`** (`refs/heads/main` at that time). That sha, not `main`, is what makes the conclusions reproducible:
+
+- `--ref <40-hex sha>` is used verbatim on all three channels and never sent to the commits API; the manifest records `ref_source: arg-sha` and `ref_resolved: <that sha>`.
+- `--ref <branch>` resolves once to a sha before any file is fetched (`ref_source: api-commit`), and every file uses the resolved sha.
+- If resolution fails, the run prints `WARNING: ... NOT byte-pinned`, keeps fetching with the raw ref, and records `ref_resolved: null` + `ref_error` — it does not pretend to be pinned.
+- `--no-resolve` skips the API entirely (`ref_source: no-resolve`, `ref_resolved: null`); it is for mirrors and tests, not for conclusions.
+
+So two manifests are the same source only when `ref_resolved` is equal **and** `files[].sha256` match file by file. `tools/check_check_contract.py` re-proves the `arg-sha` path offline on every run and fails if this section stops naming the commit.
+
 ## Listen sources
 
 - [openai/math](https://github.com/openai/math)
@@ -59,7 +87,7 @@ Reproduction scripts live in [`repro/`](repro/); conclusions always ship with th
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Small radar notes and statement cards are the best first PRs.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Before opening a PR, run the four gates listed under [Verify the review tooling](#verify-the-review-tooling). Small radar notes and statement cards are the best first PRs.
 
 ## License
 

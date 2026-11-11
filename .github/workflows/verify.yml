@@ -1,0 +1,71 @@
+name: verify
+
+# Four independent gates over the review tooling.  Each job can go red on its
+# own, so a red run names the broken property instead of "something failed".
+# Nothing here fetches the upstream review set: the suite, the encoding gate,
+# the static check and the contract gate all run from the clone alone.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-selftest:
+    name: offline self-test (pytest, no network)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: install pytest
+        run: python -m pip install --disable-pip-version-check pytest==8.4.2
+      - name: run the offline regression suite
+        # conftest.py refuses any non-loopback socket/DNS access, so a test
+        # that starts depending on the network fails here instead of fetching.
+        run: python -m pytest repro/family378-subexpsat -q
+
+  encoding:
+    name: encoding (UTF-8, no BOM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: UTF-8 without BOM for every tracked file
+        run: python tools/check_repo_encoding.py
+
+  static:
+    name: static check (ruff + compileall)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: install ruff
+        run: python -m pip install --disable-pip-version-check ruff==0.15.0
+      - name: ruff (default rules - pyflakes plus syntax errors)
+        run: ruff check --no-cache repro tools
+      - name: byte-compile every script
+        run: python -m compileall -q repro tools
+
+  contract:
+    name: contract (C1..C24 + pinned ref)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: check ids, citations and the fetch pin
+        run: python tools/check_check_contract.py
