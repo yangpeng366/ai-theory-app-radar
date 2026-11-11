@@ -22,6 +22,17 @@ Intake buckets:
 2. **New algorithms**
 3. **New understanding** (counterexamples, exposed gaps, restated assumptions)
 
+## For agents
+
+Most downstream users are LLM agents, so compatibility stops at the interface level:
+
+- one candidate card per file in `radar/`, named `radar/<date>-<topic>-<slug>.md`
+- machine checks live in
+ `tools/` and `repro/`, and each gate exits non-zero on its own failure (see **Verify the review tooling**)
+- progress notes append to `progress/`, one dated file per round
+
+Read `AGENTS.md` for the handoff rules (encoding, where to write, what not to claim) before editing.
+
 ## Repo layout
 
 | Path | Role |
