@@ -56,7 +56,7 @@ CI is [`.github/workflows/verify.yml`](.github/workflows/verify.yml). It runs fo
 
 | Gate | Command (local) | What it proves |
 |---|---|---|
-| offline self-test | `python -m pytest repro/family378-subexpsat -q` | the fetch/closure/C16 logic still behaves (37 cases, 0 network) |
+| offline self-test | `python -m pytest repro/family378-subexpsat -q` | the fetch/closure/C14/C16 logic still behaves, including the C14 red cases and the C20/C21 SKIP policy (43 cases, 0 network) |
 | encoding | `python tools/check_repo_encoding.py` | every tracked file is UTF-8 and BOM-free, per `AGENTS.md` |
 | static | `ruff check repro tools` and `python -m compileall -q repro tools` | no syntax error, no undefined name |
 | contract | `python tools/check_check_contract.py` | C1..C24 map one-to-one to `check-gap.py`, every cited id exists, the fetch is pinned |

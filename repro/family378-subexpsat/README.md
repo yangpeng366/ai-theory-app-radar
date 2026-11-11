@@ -150,7 +150,8 @@ token 只出现在 `Authorization` 头、**不进 manifest 也不进 WARNING**�
 `--no-resolve` 不碰 commits API 且记 `no-resolve`。
 
 整个目录另由 `conftest.py` 兜底：任何非 loopback 的 socket 连接与 DNS 查询在测试期间都被拒绝，
-`test_offline_guard.py` 用 2 例证明这道闸门本身有效；加上 `test_check_gap.py` 的 3 例，`python -m pytest repro/family378-subexpsat -q` 共 37 例。
+`test_offline_guard.py` 用 2 例证明这道闸门本身有效；加上 `test_check_gap.py` 的 9 例
+（C16 两支 + C14 的 1 正 4 反 + C20/C21 的 SKIP 口径），`python -m pytest repro/family378-subexpsat -q` 共 43 例。
 
 ## 二、一键核查
 
@@ -166,13 +167,45 @@ python check-gap.py --src ./f378
 | 二、算术与复杂度契约 | C12–C19 | 尺度定义、`rho` 阶、指数差、编码换算引理、编码界数值复核、`runtimeScale ≤ 4ρ` 数值复核、ETH 陈述形状、挑战陈述 ≡ 解法陈述 |
 | 三、陈述级核查 | C20–C24 | 论文主定理指数、论文 `rho` 定义、上游自陈锐化、Lean 侧锐化缺失、差距是否小 `n` 假象 |
 
-退出码 0 表示全部机械检查成立；**科学判定（哪些论文段落被覆盖）以表格打印，不写进退出码**——本族的预期发现就是「确有一处差距」。
+退出码 0 表示**没有 FAIL**；`SKIP` 与 `GAP` 不进退出码，但都出现在汇总行——有 SKIP 时行尾追加
+`, skipped: N`，并多打一行 `incomplete: ...`。**科学判定（哪些论文段落被覆盖）以表格打印，不写进退出码**——本族的预期发现就是「确有一处差距」。
 
-2026-10-30 实测：`checks: 24, FAIL: 0, confirmed gaps: 1`（C23）。
+C11 的数字**取自当前这棵树**，不是常量：判据是 `check-gap.py` 打印的
+`every OAI import resolves inside the fetched subset (N modules)` / `K unresolved imports over N fetched modules`，
+`N` 由脚本现场数 `.lean` 文件得到，随闭包完整度变化。两个有记录的快照（同一上游 sha `4eaee875…`）：
 
-2026-11-11 实测（取件面扩到 2088 个 Lean 模块）：`checks: 24, FAIL: 0, confirmed gaps: 1`，
-C11 仍为 PART，但数字才有意义：`330 unresolved imports over 2088 fetched modules (290 distinct missing modules)`。
-原因见下节：**C11 原先把斜杠路径当模块名比较，任何带 `OAI.*` import 的树都必然 PART**。
+| 快照 | 取件树 | C11 输出 | 判读 |
+|---|---|---|---|
+| 2026-11-11 第五轮 | 2088 个 `.lean`；`_closure.json` `status=truncated`、`not_fetched=290` | `330 unresolved imports over 2088 fetched modules (290 distinct missing modules)` | PART：闭包被 `--max-modules` 截断 |
+| 2026-11-11 第六轮 | 3092 个 `.lean`；`_closure.json` `status=complete`、`not_fetched=0`、`failed=0`；manifest 99 文件 / 2 300 424 字节 | `every OAI import resolves inside the fetched subset (3092 modules)` | PASS：闭包闭合 |
+
+复算方式（第二条打印出来的模块数就是上表数字的唯一来源，不要从文档抄）：
+
+```powershell
+python fetch-sources.py --out <cache> --ref 4eaee87548250b2682affda7d05d947c05554bae --max-modules 3000
+python check-gap.py --src <cache>
+```
+
+判定顺序是「先看闭包状态，再看 C11 行」：`_closure.json` 的 `complete` / `not_fetched` 说明树是否被截断，
+C11 行给出该树的未解析条数。**「3092」是第六轮缓存（`status=complete`）的读数**，缓存不在仓库内，
+重建后数字可以不同（上游改动或 `--max-modules` 变小都会变），所以它是快照值而不是常量。
+该轮完整回执见 [`radar/2026-11-11-sixth-pass.md`](../../radar/2026-11-11-sixth-pass.md)；
+第五轮的 290 模块阻塞清单 `c11-frontier-20261111.tsv` 是那一轮的取证记录，闭包补齐后它描述的是
+「当时缺什么」，不是当前缺口。
+
+### C14/C20/C21 的判据细则
+
+- **C14 指数差**（此前是无条件 PASS）：先从取件树读出 `SqrtLogSpace/rho` 的定义体，断言它仍是
+  `n*(log2 log2 n)^2 / sqrt(log2 n)`（定义漂移即红）；再在 n=1e4…1e12 五个采样点上断言
+  `rho(n)/论文主界 = log2 log2 n`（相对误差 1e-9）、`rho(n)/论文 m≤Dn 锐化 = 该比值的平方`、
+  比值严格递增且 n=1e12 处 ≥ 5（Θ(log log n) 而不是 Θ(1)）。任一断言不成立即 FAIL；
+  自测里 4 个反例分别打掉：Lean 定义丢平方、`rho` 退化成论文指数（无差距）、差距退化成常数、锐化列不再平方。
+- **C20/C21（论文侧字形核查）**：PyMuPDF 是**硬依赖**，但缺依赖判 **SKIP** 而不是 FAIL/PART——
+  缺的是工具而不是证据，判 FAIL 会把环境问题说成上游问题；SKIP 会写清原因并计入汇总行的
+  `skipped: N` / `incomplete:` 提示，因此不会被误读成 24 项全过。缺 `paper.pdf`（例如 `--no-paper`
+  或只取了种子的一部分）同样是 SKIP。PDF 能读、但定位不到 `Theorem 1.1` 的指数或 `rho` 的定义时判
+  **FAIL**：那是来源不支持该断言（或抽取规则要人工过目），不是环境问题。补依赖：
+  `python -m pip install pymupdf`。
 
 多轮取件另有两个辅助脚本（不参与核对项计数，属取件与取证侧）：
 `seal-manifest.py` 把落盘树逐文件 sha256 封存成一份完整 `_manifest.json`（C1 由“本轮取件”升为“全树”）；
@@ -181,12 +214,14 @@ C11 仍为 PART，但数字才有意义：`330 unresolved imports over 2088 fetc
 ## 三、怎么读结果
 
 - **PASS** = 机械检查成立（文本、字形、哈希、数值层面的可复算事实）。
-- **PART** = 结论受取件范围所限。C11 属于这一类：它逐条核对 `import OAI.*` 是否落在已落盘树内。
+- **PART** = 结论受取件范围所限，现在只有 C11 会这样判：它逐条核对 `import OAI.*` 是否落在已落盘树内，
+  树被 `--max-modules` 截断（`_closure.json` 的 `status ∈ truncated/partial`）时必然有未解析 import。
   2026-11-11 之前的实现把已取集合存成 `OAI/.../Final` 斜杠路径、却用 `OAI.Algorithms...Final` 点号名比较，
   两者永不相等，于是**任何树都是 PART**，与取多少件无关；修复后（`check-gap.py` C11 段）缺口数字才有意义。
-  当前状态：2088 个模块，330 条未解析 import、290 个缺失模块（全部在 `OAI.Algorithms.SubexponentialSAT.*` 内，
-  族外 0 条），290 个模块经 Range 探测全部返回 206 —— 属“还没取完”，不是“取不到”，清单见
-  `c11-frontier-20261111.tsv`，复跑命令见 `radar/2026-11-11-fifth-pass.md` 第五节。
+  第六轮闭包取完，C11 为 **PASS（3092 模块，`_closure.json` `status=complete`）**；用第五轮那棵截断的树复跑，
+  它仍会如实报 PART 并给出 330/2088 的缺口数。
+- **SKIP** = 这项检查在本机跑不起来（缺 `paper.pdf` 或缺 PyMuPDF），原因写在该检查行里，并计入汇总行的
+  `skipped: N` 与 `incomplete:` 提示。**SKIP 既不是通过也不是 FAIL**：它声明「这轮不是完整的 24 项判定」。
 - **GAP** = 确认为形式化差距（C23：`m ≤ Dn` 锐化界 `2^{O(n/√log n)}` 在取件范围内无任何对应陈述）。
 
 C19「挑战陈述 ≡ 解法陈述」目前是**文本等价**：挑战文件与解法文件中 `exact_count_and_sat` 的类型部分逐字相同（1 124 字符）。

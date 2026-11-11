@@ -55,8 +55,9 @@ EXPECTED_STAGES = {
     "stage3": list(range(20, 25)),
 }
 
-# A helper called by stage2 also records a check (C16), so it belongs to it.
-HELPER_STAGE = {"check_encoding_bounds": "stage2"}
+# A helper called by stage2 also records a check (C14, C16), so it belongs there.
+HELPER_STAGE = {"check_encoding_bounds": "stage2",
+                "check_exponent_gap": "stage2"}
 
 # openai/math commit the 2026-11-11 review set was fetched from; recorded as
 # ref_resolved / ref_source=arg-sha in the run logs quoted under radar/.

@@ -23,7 +23,9 @@ Usage:
 Exit code 0 means every mechanical check held.  The scientific verdict (which
 manuscript segments are covered) is printed as a table, not encoded in the exit
 code.  A `GAP` verdict marks a *confirmed* difference between manuscript and
-formalisation -- that is the deliverable, not a failure.
+formalisation -- that is the deliverable, not a failure.  A `SKIP` verdict means
+the check could not run in this environment (no paper.pdf, no PyMuPDF); it is
+counted on the totals line so an incomplete run never reads as a full pass.
 """
 
 import argparse
@@ -411,6 +413,95 @@ def paper_sharp(n):
     return n / math.sqrt(math.log2(n))
 
 
+# C14 samples the two exponent models at five decades.  The check is arithmetic,
+# so it fails on a drifted formula rather than on a re-run being unavailable.
+C14_SAMPLES = (10 ** 4, 10 ** 6, 10 ** 8, 10 ** 10, 10 ** 12)
+C14_RELATIVE_TOLERANCE = 1e-9
+# log2 log2 1e12 = 5.32; a Theta(log log n) gap must still be well above a
+# constant at the largest sample, otherwise the claim is really Theta(1).
+C14_MIN_TOP_RATIO = 5.0
+C14_LEAN_FACTORS = ("(n:ℝ)*", "(Real.logb2(Real.logb2n))^2",
+                    "/Real.sqrt(Real.logb2n)")
+
+
+def lean_rho_is_squared(rho_body):
+    """Whether the fetched Lean `rho` body is n*(log2 log2 n)^2/sqrt(log2 n).
+
+    Whitespace and parentheses are normalised away, so a reformatted definition
+    still matches while a changed exponent does not.  This is the anchor that
+    keeps C14's numeric model the *fetched* definition and not a memorised one.
+    """
+    definition = "".join(rho_body.partition(":=")[2].split())
+    return all(factor in definition for factor in C14_LEAN_FACTORS)
+
+
+def exponent_gap(rho_body):
+    """Return (rows, problems) for the C14 exponent-difference contract.
+
+    The claim under test is `rho(n) = log2 log2 n * paper_main(n)`, so the Lean
+    bound 2^(O(rho)) loses exactly a factor log log n against Theorem 1.1's
+    exponent, and the same ratio squared against the m<=Dn sharpening.  Each
+    sample asserts:
+
+      * the Lean definition still has the squared log-log shape it is checked
+        against (drift in `rho` makes the numeric rows meaningless),
+      * rho > paper main > 0, i.e. the formalised bound is the weaker one,
+      * rho/paper main equals log2 log2 n, and rho/paper sharpening equals its
+        square, both within C14_RELATIVE_TOLERANCE,
+      * the ratio increases monotonically and ends above C14_MIN_TOP_RATIO.
+
+    A formula edit on either side, or a lost square in the Lean body, lands in
+    `problems`; an empty list is a real PASS.
+    """
+    problems = []
+    if not lean_rho_is_squared(rho_body):
+        problems.append("Lean `rho` is no longer n*(log2 log2 n)^2/sqrt(log2 n)")
+    rows = []
+    previous = None
+    for n in C14_SAMPLES:
+        decade = int(round(math.log10(n)))
+        lean_exp, main, sharp = rho(n), paper_main(n), paper_sharp(n)
+        if not lean_exp > main > 0 or sharp <= 0:
+            problems.append("n=1e%d: rho=%.6g is not above the manuscript main "
+                            "exponent %.6g" % (decade, lean_exp, main))
+            rows.append((n, float("nan"), float("nan")))
+            continue
+        expected = math.log2(math.log2(n))
+        ratio = lean_exp / main
+        sharp_ratio = lean_exp / sharp
+        if abs(ratio - expected) > C14_RELATIVE_TOLERANCE * expected:
+            problems.append("n=1e%d: rho/main=%.6f but log2 log2 n=%.6f"
+                            % (decade, ratio, expected))
+        if abs(sharp_ratio - expected ** 2) > C14_RELATIVE_TOLERANCE * expected ** 2:
+            problems.append("n=1e%d: rho/sharpening=%.6f but (log2 log2 n)^2=%.6f"
+                            % (decade, sharp_ratio, expected ** 2))
+        if previous is not None and not ratio > previous:
+            problems.append("n=1e%d: rho/main=%.6f does not exceed the previous "
+                            "sample's %.6f -- the gap is not widening"
+                            % (decade, ratio, previous))
+        previous = ratio
+        rows.append((n, ratio, sharp_ratio))
+    if rows and rows[-1][1] < C14_MIN_TOP_RATIO:
+        problems.append("the exponent gap is only %.3f at n=1e12, below the %.1f "
+                        "a Theta(log log n) difference demands"
+                        % (rows[-1][1], C14_MIN_TOP_RATIO))
+    return rows, problems
+
+
+def check_exponent_gap(rho_body):
+    """Record C14 from `exponent_gap`; returns the sampled rows for the report."""
+    rows, problems = exponent_gap(rho_body)
+    if problems:
+        record("C14 指数差", "FAIL", "; ".join(problems[:3]))
+    else:
+        record("C14 指数差", "PASS",
+               "rho(n)/paper main = log2 log2 n at every sample (%.2f at n=1e12); "
+               "rho(n)/paper m<=Dn sharpening = its square (%.1f); ratio strictly "
+               "increasing over %d samples"
+               % (rows[-1][1], rows[-1][2], len(rows)))
+    return rows
+
+
 def encoding_bound_samples():
     """Return (violations, samples) for the C16 encoding-bound spot check."""
     violations = []
@@ -474,13 +565,10 @@ def stage2(src, info):
     record("C13 rho 阶", "PASS" if squared else "FAIL",
            "rho(n) = n*(logb2 logb2 n)^2 / sqrt(logb2 n)  -> squared (log log n)^2")
 
-    rows = []
-    for n in (10 ** 4, 10 ** 6, 10 ** 8, 10 ** 10, 10 ** 12):
-        lean_exp = rho(n)
-        rows.append((n, lean_exp / paper_main(n), lean_exp / paper_sharp(n)))
-    record("C14 指数差", "PASS",
-           "Lean rho / paper main = %.1f at n=1e12 ; Lean rho / paper m<=Dn bound = %.1f"
-           % (rows[-1][1], rows[-1][2]))
+    # C14 is not a printout: `exponent_gap` asserts the log-log identity, the
+    # strict growth of the ratio and the squared sharpening ratio, and is red as
+    # soon as either formula (or the Lean body it mirrors) drifts.
+    rows = check_exponent_gap(rho_body)
 
     has_sq = "encoding_le_declaredSize_sq" in bounds
     has_pow = "encoding_pow_le_declaredSize" in bounds
@@ -545,18 +633,27 @@ def stage2(src, info):
 
 # ------------------------------------ stage 3: statement-level (instruction) check
 
+class PdfUnavailable(Exception):
+    """PyMuPDF is absent, so the PDF glyph checks cannot run at all."""
+
+
 def paper_exponent_forms(pdf_path):
     """Read Theorem 1.1's exponent and rho's exponent out of the PDF glyphs.
 
     A superscript digit is a separate span with a smaller font size and a higher
     baseline, so 'is there a raised 2 next to log log n?' is decidable without a
     screenshot.  Returns {'thm11': 'single'|'squared'|None,
-    'rho': 'single'|'squared'|None}.
+    'rho': 'single'|'squared'|None}; a key stays None when the pattern is not in
+    the text, which stage3 reports as FAIL (the source does not back the claim).
+
+    Raises `PdfUnavailable` when PyMuPDF is not installed: that is a missing
+    tool, not missing evidence, so C20/C21 SKIP instead of judging.
     """
     try:
         import fitz  # PyMuPDF
-    except ImportError:
-        return {"thm11": None, "rho": None}
+    except ImportError as exc:
+        raise PdfUnavailable(
+            "PyMuPDF (fitz) is not installed: python -m pip install pymupdf") from exc
     forms = {"thm11": None, "rho": None}
     document = fitz.open(pdf_path)
     try:
@@ -597,24 +694,53 @@ def stage3(src, info):
     pdf = os.path.join(src, "preprints",
                         "The-Exponential-Time-Hypothesis-is-False-October-25-2026",
                         "paper.pdf")
-    forms = paper_exponent_forms(pdf) if os.path.exists(pdf) else {"thm11": None, "rho": None}
-    if forms["thm11"] is None:
-        record("C20 论文主定理指数", "PART", "PDF glyph check unavailable (PyMuPDF missing)")
-    elif forms["thm11"] == "single":
-        record("C20 论文主定理指数", "PASS",
-               "Theorem 1.1 exponent read from PDF glyphs: single log log n "
-               "(n log log n / sqrt(log n))")
+    # C20/C21 read the manuscript's exponents out of paper.pdf.  When that read
+    # cannot happen the verdict is SKIP with the reason -- never PART and never a
+    # silent PASS: a missing PDF or a missing PyMuPDF is an incomplete run, and
+    # main() says so next to the totals.  Once the bytes are readable, a missing
+    # glyph pattern is FAIL: the source then does not back the claim.
+    forms = {"thm11": None, "rho": None}
+    unavailable = None
+    unreadable = None
+    if not os.path.exists(pdf):
+        unavailable = ("paper.pdf not fetched (%s); C20/C21 read the manuscript "
+                       "exponents out of it" % pdf)
     else:
-        record("C20 论文主定理指数", "FAIL",
-               "Theorem 1.1 exponent has a squared log log: %s" % forms["thm11"])
+        try:
+            forms = paper_exponent_forms(pdf)
+        except PdfUnavailable as exc:
+            unavailable = "%s; C20/C21 read the manuscript exponents from paper.pdf" % exc
+        except Exception as exc:  # any parse failure is evidence, not a crash
+            unreadable = "%s: %s" % (type(exc).__name__, exc)
 
-    if forms["rho"] is None:
-        record("C21 论文 rho 定义", "PART", "rho definition not located in the PDF")
-    elif forms["rho"] == "squared":
-        record("C21 论文 rho 定义", "PASS",
-               "rho(n) = n (log log n)^2 / sqrt(log n): squared, i.e. the weaker exponent")
+    if unavailable:
+        record("C20 论文主定理指数", "SKIP", unavailable)
+        record("C21 论文 rho 定义", "SKIP", unavailable)
+    elif unreadable:
+        record("C20 论文主定理指数", "FAIL", "paper.pdf could not be read: " + unreadable)
+        record("C21 论文 rho 定义", "FAIL", "paper.pdf could not be read: " + unreadable)
     else:
-        record("C21 论文 rho 定义", "FAIL", "rho definition is not squared")
+        if forms["thm11"] is None:
+            record("C20 论文主定理指数", "FAIL",
+                   "Theorem 1.1 exponent not found in paper.pdf's text/glyphs")
+        elif forms["thm11"] == "single":
+            record("C20 论文主定理指数", "PASS",
+                   "Theorem 1.1 exponent read from PDF glyphs: single log log n "
+                   "(n log log n / sqrt(log n))")
+        else:
+            record("C20 论文主定理指数", "FAIL",
+                   "Theorem 1.1 exponent has a squared log log: %s" % forms["thm11"])
+
+        if forms["rho"] is None:
+            record("C21 论文 rho 定义", "FAIL",
+                   "rho definition not located in paper.pdf (the locator wants a "
+                   "`log log` span and `rho(n)` on the same line); inspect by hand")
+        elif forms["rho"] == "squared":
+            record("C21 论文 rho 定义", "PASS",
+                   "rho(n) = n (log log n)^2 / sqrt(log n): squared, i.e. the "
+                   "weaker exponent")
+        else:
+            record("C21 论文 rho 定义", "FAIL", "rho definition is not squared")
 
     docs = read(os.path.join(src, "lean", "docs", "378.md"))
     has_sharp = "m\\le Dn" in docs or "m≤Dn" in docs
@@ -683,14 +809,21 @@ def main():
 
     failures = [r for r in RESULTS if r["verdict"] == "FAIL"]
     gaps = [r for r in RESULTS if r["verdict"] == "GAP"]
+    skipped = [r for r in RESULTS if r["verdict"] == "SKIP"]
     print("")
-    print("checks: %d, FAIL: %d, confirmed gaps: %d"
-          % (len(RESULTS), len(failures), len(gaps)))
+    print("checks: %d, FAIL: %d, confirmed gaps: %d%s"
+          % (len(RESULTS), len(failures), len(gaps),
+             ", skipped: %d" % len(skipped) if skipped else ""))
+    if skipped:
+        print("incomplete: %d of %d checks did not run (%s) -- this is not a "
+              "full verdict, and the reason is printed above each SKIP"
+              % (len(skipped), len(RESULTS),
+                 ", ".join(item["check"].split()[0] for item in skipped)))
 
     lines = ["# 族 378 第三方复核判定表", "",
              "来源：openai/math @ main，取件目录 `%s`" % src, "",
-             "机械检查 %d 项，FAIL %d 项，已确认的形式化差距 %d 项。"
-             % (len(RESULTS), len(failures), len(gaps)), ""]
+             "机械检查 %d 项，FAIL %d 项，SKIP %d 项，已确认的形式化差距 %d 项。"
+             % (len(RESULTS), len(failures), len(skipped), len(gaps)), ""]
     lines.append("| 检查 | 判定 | 细节 |")
     lines.append("|---|---|---|")
     for item in RESULTS:
