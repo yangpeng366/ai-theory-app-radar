@@ -2,7 +2,7 @@
   "card_count": 9,
   "cards": [
     {
-      "bytes": 6892,
+      "bytes": 6785,
       "date": "2026-10-21",
       "docs": [],
       "families": [
@@ -16,14 +16,14 @@
       "path": "radar/2026-10-21-first-pass.md",
       "related_cards": [],
       "repro": [],
-      "sha256": "7ae24037791f140cb3f537a68ed7cab23aa884ddeed4d81c1b9be897dd86627a",
+      "sha256": "7d01a3ebb001a8fda33960fded2a61a5072743f831412042115b3b5a9c51aa6e",
       "slug": "pass",
       "tags": [],
       "title": "AI 理论 → 应用 · 首轮筛查（2026-10-21）",
       "topic": "first"
     },
     {
-      "bytes": 10073,
+      "bytes": 9923,
       "date": "2026-10-29",
       "docs": [],
       "families": [
@@ -41,7 +41,7 @@
       "repro": [
         "repro/mub-dim6"
       ],
-      "sha256": "5268c4b853e2c1f20957f08f42c1be842bdc67565f03c9a0228528d237935565",
+      "sha256": "d426359407e25dde65d9b5cd098fdbd12ae1cac2836dc581b9759b2644d9c71a",
       "slug": "mub-dim6-review",
       "tags": [
         "executable-recheck",
@@ -52,7 +52,7 @@
       "topic": "family266"
     },
     {
-      "bytes": 9621,
+      "bytes": 9527,
       "date": "2026-10-29",
       "docs": [],
       "families": [
@@ -75,7 +75,7 @@
       "repro": [
         "repro/mub-dim6"
       ],
-      "sha256": "c35710599db6c24acb6c8f9802f764ecbb26e1e04da881e4f24799aa3922570c",
+      "sha256": "a8a6e6326c2a3548ca5726a816a325f97cdf7fe55c4a12062b690f23cca05fa7",
       "slug": "pass",
       "tags": [
         "executable-recheck",
@@ -85,7 +85,7 @@
       "topic": "second"
     },
     {
-      "bytes": 13577,
+      "bytes": 13419,
       "date": "2026-10-30",
       "docs": [
         "docs/lean-toolchain-setup.md"
@@ -109,7 +109,7 @@
         "repro/family378-subexpsat/README.md",
         "repro/family378-subexpsat/check-gap.py"
       ],
-      "sha256": "d0dd2979ba97b2310cfa9d3a1f94ca257186a0f92ac2900bac02ffa6560c678e",
+      "sha256": "94b9b432fc08976a52eded7c361aaa49ffcb32ac32aff6b50dbe0d07de90749e",
       "slug": "formalization-gap",
       "tags": [
         "executable-recheck",
@@ -119,7 +119,7 @@
       "topic": "family378"
     },
     {
-      "bytes": 10675,
+      "bytes": 10518,
       "date": "2026-10-30",
       "docs": [],
       "families": [
@@ -137,7 +137,7 @@
       "repro": [
         "repro/family378-subexpsat/check-gap.py"
       ],
-      "sha256": "2929d0f470fd779ddb73e3c41ac207db96f266ec1f1cc999b413705714dbef3f",
+      "sha256": "5d4453a1dabce18e920f26c5351fcd51bcb4cb821875336415acc18dff767baf",
       "slug": "math-revised-review-draft",
       "tags": [
         "draft"
@@ -146,7 +146,7 @@
       "topic": "oai"
     },
     {
-      "bytes": 8676,
+      "bytes": 8547,
       "date": "2026-10-30",
       "docs": [
         "docs/lean-toolchain-setup.md"
@@ -174,7 +174,7 @@
         "repro/mub-dim6/fetch-verification.py",
         "repro/mub-dim6/selfcheck.py"
       ],
-      "sha256": "c00dffe40338595f9d1b932b1cce9efd59bce88efb2f75e288fe14a7ef76df27",
+      "sha256": "d4d95501c2360f79abaa24aae00118eedcb025315fb885d3bee8b67ed464c1f7",
       "slug": "pass",
       "tags": [
         "executable-recheck",
@@ -185,7 +185,7 @@
       "topic": "third"
     },
     {
-      "bytes": 8027,
+      "bytes": 7901,
       "date": "2026-11-01",
       "docs": [
         "docs/lean-toolchain-setup.md"
@@ -214,7 +214,7 @@
         "repro/mub-dim6/selfcheck.py",
         "repro/upstream-snapshot.json"
       ],
-      "sha256": "72c2953a5ae15507dda1d6b1555f9aadda8124d714854c70f69439ea2c6d48f1",
+      "sha256": "806f1f8f479d5a0fa7a571a576d9c2a145ca9152fc48dca11d6669e18bfaf2c8",
       "slug": "pass",
       "tags": [
         "round-log"

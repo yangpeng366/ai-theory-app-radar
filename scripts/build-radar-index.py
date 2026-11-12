@@ -25,8 +25,9 @@ Per card:
   * `repro`, `docs` repository-relative pointers to `repro/**` and
                     `docs/**` + `progress/**`;
   * `related_cards` other cards under `radar/` this one links to;
-  * `bytes`, `sha256`  of the card as committed, so the gate can prove that
-                    the index describes the current text.
+  * `bytes`, `sha256`  of the card's text with LF line endings, so the gate can prove that
+                    the index describes the current text — and so that a CRLF working copy on
+                    Windows and an LF checkout on Linux describe the same card.
 
 Determinism is a requirement, not a nicety: the same `radar/` must produce the
 same bytes, otherwise the gate would flap.  There is no generation timestamp,
@@ -102,7 +103,13 @@ def read_card(root, name):
     path = os.path.join(root, CARD_DIR, name)
     with open(path, "rb") as handle:
         blob = handle.read()
-    return blob, blob.decode("utf-8")
+    # The card's text with the line endings normalised to LF.  A checkout is not the same bytes
+    # everywhere: `core.autocrlf=true` gives a CRLF working copy on Windows and an LF one on
+    # Linux, so a digest of the raw file would differ per platform and the CI diff would go red
+    # for a card nobody touched.  Hashing the normalised text describes the card's content
+    # rather than one checkout's line endings.
+    text = blob.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return text.encode("utf-8"), text
 
 
 def metadata_block(text):
