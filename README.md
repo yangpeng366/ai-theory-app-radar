@@ -1,6 +1,7 @@
 # AI Theory → Application Radar
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![skills.sh](https://skills.sh/b/yangpeng366/ai-theory-app-radar)](https://skills.sh/yangpeng366/ai-theory-app-radar)
 
 Open collaboration board for turning AI-produced mathematics / theory into follow-ups in cryptography, physics, materials, complex networks, and engineering.
 
