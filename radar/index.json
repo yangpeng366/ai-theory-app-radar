@@ -1,0 +1,288 @@
+{
+  "card_count": 9,
+  "cards": [
+    {
+      "bytes": 6892,
+      "date": "2026-10-21",
+      "docs": [],
+      "families": [
+        102
+      ],
+      "id": "2026-10-21-first-pass",
+      "labels": {
+        "数据源": "`openai/math` CONTENTS.md（719 手稿 / 372 族）+ lean/formalization.yaml（约 173 条 source 登记）。",
+        "过滤口径": "标题/摘要含硬度、SDP、格、流体、自旋、矩阵乘、编辑距离、量子电路等，且优先带 `[Lean]` 标注。"
+      },
+      "path": "radar/2026-10-21-first-pass.md",
+      "related_cards": [],
+      "repro": [],
+      "sha256": "7ae24037791f140cb3f537a68ed7cab23aa884ddeed4d81c1b9be897dd86627a",
+      "slug": "pass",
+      "tags": [],
+      "title": "AI 理论 → 应用 · 首轮筛查（2026-10-21）",
+      "topic": "first"
+    },
+    {
+      "bytes": 10073,
+      "date": "2026-10-29",
+      "docs": [],
+      "families": [
+        266
+      ],
+      "id": "2026-10-29-family266-mub-dim6-review",
+      "labels": {
+        "性质": "**可执行复核（第三方复现成功）** + **形式化缺口（Lean 未证出论文上界）**",
+        "日期": "2026-10-29",
+        "来源": "[openai/math](https://github.com/openai/math) `preprints/The-maximum-number-of-mutually-unbiased-bases-in-dimension-six-September-24-2026/`（作者标注 OpenAI，2026-09-24）",
+        "飞书行": "`recvwuSTYb28w0`（AI理论→密码/物理/材料/网络应用雷达）"
+      },
+      "path": "radar/2026-10-29-family266-mub-dim6-review.md",
+      "related_cards": [],
+      "repro": [
+        "repro/mub-dim6"
+      ],
+      "sha256": "5268c4b853e2c1f20957f08f42c1be842bdc67565f03c9a0228528d237935565",
+      "slug": "mub-dim6-review",
+      "tags": [
+        "executable-recheck",
+        "formalization-gap",
+        "statement-card"
+      ],
+      "title": "家族 266：维六恰三组互偏基（N(6)=3）· 陈述卡与第三方可执行复核",
+      "topic": "family266"
+    },
+    {
+      "bytes": 9621,
+      "date": "2026-10-29",
+      "docs": [],
+      "families": [
+        79,
+        102,
+        266,
+        376,
+        378
+      ],
+      "id": "2026-10-29-second-pass",
+      "labels": {
+        "日期": "2026-10-29",
+        "触发": "用户转来头条《我们完了，奥特曼曝数学家5天心路反转，陶哲轩：英雄时代退场》（新智元，2026-10-29），言「OpenAI 在做的，投入到扩展应用新理论，和第48条有点像，继续跟进」。",
+        "飞书行": "`recvwuSTYb28w0`（AI理论→密码/物理/材料/网络应用雷达），第 48 条。"
+      },
+      "path": "radar/2026-10-29-second-pass.md",
+      "related_cards": [
+        "radar/2026-10-29-family266-mub-dim6-review.md"
+      ],
+      "repro": [
+        "repro/mub-dim6"
+      ],
+      "sha256": "c35710599db6c24acb6c8f9802f764ecbb26e1e04da881e4f24799aa3922570c",
+      "slug": "pass",
+      "tags": [
+        "executable-recheck",
+        "round-log"
+      ],
+      "title": "第二轮雷达（2026-10-29）：从「批量交卷」到「可执行复核」",
+      "topic": "second"
+    },
+    {
+      "bytes": 13577,
+      "date": "2026-10-30",
+      "docs": [
+        "docs/lean-toolchain-setup.md"
+      ],
+      "families": [
+        266,
+        378
+      ],
+      "id": "2026-10-30-family378-formalization-gap",
+      "labels": {
+        "复跑脚本": "[`repro/family378-subexpsat/`](../repro/family378-subexpsat/README.md)",
+        "性质": "**可执行复核（陈述级）** + **形式化差距（逐项量化）**",
+        "日期": "2026-10-30",
+        "来源": "[openai/math](https://github.com/openai/math) `preprints/The-Exponential-Time-Hypothesis-is-False-October-25-2026/`（2026-10-25 修订版）",
+        "飞书行": "`recvwuSTYb28w0`（AI理论→密码/物理/材料/网络应用雷达）"
+      },
+      "path": "radar/2026-10-30-family378-formalization-gap.md",
+      "related_cards": [],
+      "repro": [
+        "repro/family378-subexpsat",
+        "repro/family378-subexpsat/README.md",
+        "repro/family378-subexpsat/check-gap.py"
+      ],
+      "sha256": "d0dd2979ba97b2310cfa9d3a1f94ca257186a0f92ac2900bac02ffa6560c678e",
+      "slug": "formalization-gap",
+      "tags": [
+        "executable-recheck",
+        "formalization-gap"
+      ],
+      "title": "族 378：证伪 ETH 的形式化差距说明（Lean 界 vs 论文界）",
+      "topic": "family378"
+    },
+    {
+      "bytes": 10675,
+      "date": "2026-10-30",
+      "docs": [],
+      "families": [
+        378
+      ],
+      "id": "2026-10-30-oai-math-revised-review-draft",
+      "labels": {
+        "日期": "2026-10-30",
+        "状态": "**草稿，尚未提交 PR**（提交前须先读社区 `AGENTS.md` 与该目录既有 `NOTES.md`）",
+        "目标仓库": "[mathcommunity/oai-math-revised](https://github.com/mathcommunity/oai-math-revised/)（受邀参与修订 OpenAI 写稿，可申请 reviewer）",
+        "目标目录": "`preprints/The-Exponential-Time-Hypothesis-is-False-October-25-2026/`"
+      },
+      "path": "radar/2026-10-30-oai-math-revised-review-draft.md",
+      "related_cards": [],
+      "repro": [
+        "repro/family378-subexpsat/check-gap.py"
+      ],
+      "sha256": "2929d0f470fd779ddb73e3c41ac207db96f266ec1f1cc999b413705714dbef3f",
+      "slug": "math-revised-review-draft",
+      "tags": [
+        "draft"
+      ],
+      "title": "投 `mathcommunity/oai-math-revised` 的修订意见草稿（族 378）",
+      "topic": "oai"
+    },
+    {
+      "bytes": 8676,
+      "date": "2026-10-30",
+      "docs": [
+        "docs/lean-toolchain-setup.md"
+      ],
+      "families": [
+        266,
+        378
+      ],
+      "id": "2026-10-30-third-pass",
+      "labels": {
+        "仓库": "[yangpeng366/ai-theory-app-radar](https://github.com/yangpeng366/ai-theory-app-radar)（公开仓，`main`）",
+        "日期": "2026-10-30",
+        "本轮定位": "**openai/math 仓的第三次可执行复核**（族 378，24 项机械检查）+ **族 266 最小自检补齐** + **上游/社区辖区差异实测**",
+        "飞书行": "`recvwuSTYb28w0`（AI理论→密码/物理/材料/网络应用雷达）"
+      },
+      "path": "radar/2026-10-30-third-pass.md",
+      "related_cards": [
+        "radar/2026-10-30-family378-formalization-gap.md",
+        "radar/2026-10-30-oai-math-revised-review-draft.md"
+      ],
+      "repro": [
+        "repro/family378-subexpsat",
+        "repro/family378-subexpsat/check-gap.py",
+        "repro/mub-dim6",
+        "repro/mub-dim6/fetch-verification.py",
+        "repro/mub-dim6/selfcheck.py"
+      ],
+      "sha256": "c00dffe40338595f9d1b932b1cce9efd59bce88efb2f75e288fe14a7ef76df27",
+      "slug": "pass",
+      "tags": [
+        "executable-recheck",
+        "formalization-gap",
+        "round-log"
+      ],
+      "title": "第三轮：族 378 形式化差距复核（第三次可执行复核）+ 族 266 一键自检（绿卡）",
+      "topic": "third"
+    },
+    {
+      "bytes": 8027,
+      "date": "2026-11-01",
+      "docs": [
+        "docs/lean-toolchain-setup.md"
+      ],
+      "families": [
+        266,
+        378
+      ],
+      "id": "2026-11-01-fourth-pass",
+      "labels": {
+        "仓库": "[yangpeng366/ai-theory-app-radar](https://github.com/yangpeng366/ai-theory-app-radar)（公开仓，`main`）",
+        "日期": "2026-11-01",
+        "飞书行": "`recvwuSTYb28w0`（AI理论→密码/物理/材料/网络应用雷达）"
+      },
+      "path": "radar/2026-11-01-fourth-pass.md",
+      "related_cards": [
+        "radar/2026-10-29-family266-mub-dim6-review.md",
+        "radar/2026-10-30-family378-formalization-gap.md",
+        "radar/2026-10-30-oai-math-revised-review-draft.md",
+        "radar/2026-10-30-third-pass.md"
+      ],
+      "repro": [
+        "repro/family378-subexpsat/check-gap.py",
+        "repro/monitor-upstream.py",
+        "repro/mub-dim6/fetch-verification.py",
+        "repro/mub-dim6/selfcheck.py",
+        "repro/upstream-snapshot.json"
+      ],
+      "sha256": "72c2953a5ae15507dda1d6b1555f9aadda8124d714854c70f69439ea2c6d48f1",
+      "slug": "pass",
+      "tags": [
+        "round-log"
+      ],
+      "title": "第四轮（2026-11-01）：族 266 绿灯坐实 + 两处真缺陷 + 上游增量监听固化",
+      "topic": "fourth"
+    },
+    {
+      "bytes": 8988,
+      "date": "2026-11-11",
+      "docs": [],
+      "families": [
+        378
+      ],
+      "id": "2026-11-11-fifth-pass",
+      "labels": {
+        "上游": "`openai/math` @ `4eaee87548250b2682affda7d05d947c05554bae`（`refs/heads/main`，与本轮 manifest 的 `ref_resolved` 一致）",
+        "基线": "`a95e622 feat(fetch): pin the upstream ref to a commit sha in the manifest`（工作区干净）",
+        "日期": "2026-11-11"
+      },
+      "path": "radar/2026-11-11-fifth-pass.md",
+      "related_cards": [],
+      "repro": [
+        "repro/family378-subexpsat/README.md",
+        "repro/family378-subexpsat/c11-frontier-20261111.tsv",
+        "repro/family378-subexpsat/check-gap.py",
+        "repro/family378-subexpsat/closure-frontier.py",
+        "repro/family378-subexpsat/fetch-sources.py",
+        "repro/family378-subexpsat/seal-manifest.py",
+        "repro/monitor-upstream.py",
+        "repro/upstream-snapshot.json"
+      ],
+      "sha256": "7dfa5d7e4786182856b63059a318b1e8853936a3b0db280ad7bad70924fe7251",
+      "slug": "pass",
+      "tags": [
+        "round-log"
+      ],
+      "title": "第五轮（2026-11-11）：C11 判定缺陷修复 + 族 378 执行层取件到 2088 个模块",
+      "topic": "fifth"
+    },
+    {
+      "bytes": 4804,
+      "date": "2026-11-11",
+      "docs": [],
+      "families": [
+        378
+      ],
+      "id": "2026-11-11-sixth-pass",
+      "labels": {
+        "上游": "`openai/math` @ `4eaee87548250b2682affda7d05d947c05554bae`（与本轮 manifest 的 `ref_resolved` 一致，`ref_source=arg-sha`）",
+        "基线": "`902fe70 fix(family378): report C16 violations and add regression tests`（工作区干净）",
+        "日期": "2026-11-11"
+      },
+      "path": "radar/2026-11-11-sixth-pass.md",
+      "related_cards": [],
+      "repro": [
+        "repro/family378-subexpsat"
+      ],
+      "sha256": "375b4d637900eb8e60dcef279b787accf0dd2c80b6a66d45c8f0e03c8c4728e2",
+      "slug": "pass",
+      "tags": [
+        "round-log"
+      ],
+      "title": "第六轮（2026-11-11）：import 闭包取完，C11 由 PART 转 PASS",
+      "topic": "sixth"
+    }
+  ],
+  "schema": "ai-theory-app-radar/radar-index",
+  "schema_version": 1,
+  "source": "radar/*.md"
+}

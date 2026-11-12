@@ -1,9 +1,10 @@
 name: verify
 
-# Four independent gates over the review tooling.  Each job can go red on its
+# Five independent gates over the review tooling.  Each job can go red on its
 # own, so a red run names the broken property instead of "something failed".
 # Nothing here fetches the upstream review set: the suite, the encoding gate,
-# the static check and the contract gate all run from the clone alone.
+# the static check, the contract gate and the radar index all run from the
+# clone alone.
 
 on:
   push:
@@ -69,3 +70,21 @@ jobs:
           python-version: "3.11"
       - name: check ids, citations and the fetch pin
         run: python tools/check_check_contract.py
+
+  radar-index:
+    name: radar index (metadata + pointers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: rebuild the index from radar/ and diff it against the committed file
+        # Same input, same bytes: if the rebuild differs, the committed
+        # radar/index.json is stale or was hand-edited.
+        run: |
+          python scripts/build-radar-index.py --out "$RUNNER_TEMP/radar-index.json"
+          diff -u radar/index.json "$RUNNER_TEMP/radar-index.json"
+      - name: the committed index still describes every card
+        run: python tools/check_radar_index.py

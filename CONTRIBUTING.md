@@ -19,7 +19,7 @@ This repo tracks an open pipeline: listen to AI math/theory outputs, filter veri
 
 ## Verify your change
 
-Every change runs through [`.github/workflows/verify.yml`](.github/workflows/verify.yml). Run the same four gates locally before opening a PR — each one can fail on its own:
+Every change runs through [`.github/workflows/verify.yml`](.github/workflows/verify.yml). Run the same five gates locally before opening a PR — each one can fail on its own:
 
 ```bash
 python -m pytest repro/family378-subexpsat -q     # offline self-test
@@ -27,7 +27,10 @@ python tools/check_repo_encoding.py               # UTF-8, no BOM, whole repo
 ruff check repro tools                            # static check ...
 python -m compileall -q repro tools                # ... plus a byte-compile
 python tools/check_check_contract.py              # C1..C24 + pinned ref
+python tools/check_radar_index.py                  # radar/index.json vs radar/
 ```
+
+Adding or editing a card under `radar/` also means regenerating the index with `python scripts/build-radar-index.py`; `tools/check_radar_index.py` compares it with the cards field by field, so a stale or hand-edited `radar/index.json` fails instead of silently drifting.
 
 `tools/check_check_contract.py` is the one that guards the contract: the ids in `check-gap.py` must be exactly C1..C24, the stage split must stay C1-C11 / C12-C19 / C20-C24, and every `C<n>` cited under `radar/`, `docs/`, `progress/` and the READMEs must name a check that exists. Adding a check means adding it to `check-gap.py`, naming it in a radar note, and keeping the count contiguous.
 

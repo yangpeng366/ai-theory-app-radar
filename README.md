@@ -40,8 +40,33 @@ Read `AGENTS.md` for the handoff rules (encoding, where to write, what not to cl
 | `docs/pipeline.md` | Pipeline + selection principles |
 | `progress/` | Chronological progress |
 | `radar/` | Triage notes and statement cards |
+| `radar/index.json` | Machine-readable index of the cards (generated, do not hand-edit) |
+| `scripts/build-radar-index.py` | Rebuilds `radar/index.json` from `radar/*.md` |
 | `repro/` | Reproduction scripts and protocols for third-party re-checks |
 | `AGENTS.md` | Notes for coding agents working in this repo |
+
+## Machine-readable index
+
+`radar/index.json` is the entry point for a downstream agent: one JSON file
+listing every card with its date, topic, slug, title, tags, cited family
+numbers and pointers to `repro/`, `docs/` and related cards. Read that file to
+find the candidates, then open only the cards you actually need — no more
+walking `radar/*.md` to learn what the repo already tracks.
+
+The index carries metadata and pointers, never conclusions: the statements stay
+in the cards, and nothing in `index.json` is a claim the card does not make.
+
+```bash
+python scripts/build-radar-index.py     # rebuild radar/index.json from radar/
+python tools/check_radar_index.py       # gate: the committed index matches radar/
+```
+
+Adding, renaming or deleting a card means rebuilding the index (`index.json`
+records each card's size and sha256, so any edit to a card makes it stale). The
+rebuild is deterministic — same `radar/`, same bytes, no timestamp — which is
+what lets the gate be an exact comparison, and what keeps a hand-edited
+`index.json` from passing. `python scripts/build-radar-index.py --stdout` prints
+the index without touching the file.
 
 ## Current focus (2026-10-29)
 
@@ -63,7 +88,7 @@ Reproduction scripts live in [`repro/`](repro/); conclusions always ship with th
 
 ## Verify the review tooling
 
-CI is [`.github/workflows/verify.yml`](.github/workflows/verify.yml). It runs four independent gates, each of which can fail on its own, and none of them fetch the upstream review set:
+CI is [`.github/workflows/verify.yml`](.github/workflows/verify.yml). It runs five independent gates, each of which can fail on its own, and none of them fetch the upstream review set:
 
 | Gate | Command (local) | What it proves |
 |---|---|---|
@@ -71,8 +96,9 @@ CI is [`.github/workflows/verify.yml`](.github/workflows/verify.yml). It runs fo
 | encoding | `python tools/check_repo_encoding.py` | every tracked file is UTF-8 and BOM-free, per `AGENTS.md` |
 | static | `ruff check repro tools` and `python -m compileall -q repro tools` | no syntax error, no undefined name |
 | contract | `python tools/check_check_contract.py` | C1..C24 map one-to-one to `check-gap.py`, every cited id exists, the fetch is pinned |
+| radar index | `python tools/check_radar_index.py` | `radar/index.json` matches `radar/*.md` field by field — no stale card, no hand edit, every pointer resolves |
 
-Run all four from the repository root; the whole set takes about a second. The review scripts use the standard library only, so `pytest` and `ruff` are the only installs (the workflow pins their versions).
+Run all five from the repository root; the whole set takes about a second. The review scripts use the standard library only, so `pytest` and `ruff` are the only installs (the workflow pins their versions). The radar index gate rebuilds the index in memory rather than trusting the file, and CI additionally diffs a fresh rebuild against the committed one byte for byte.
 
 ### Verify without network access
 
@@ -98,7 +124,7 @@ So two manifests are the same source only when `ref_resolved` is equal **and** `
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Before opening a PR, run the four gates listed under [Verify the review tooling](#verify-the-review-tooling). Small radar notes and statement cards are the best first PRs.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Before opening a PR, run the five gates listed under [Verify the review tooling](#verify-the-review-tooling). Small radar notes and statement cards are the best first PRs; rebuild `radar/index.json` with `python scripts/build-radar-index.py` when you add one.
 
 ## License
 
