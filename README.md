@@ -6,6 +6,15 @@ Open collaboration board for turning AI-produced mathematics / theory into follo
 
 中文要点：监听 AI 数学与理论产出 → 过滤可验证结果 → 映射到应用 → 最小成本复现。优先基础理论、AI agent 好论证的对象；应用后挂。
 
+## 一键安装（面向 Agent）
+
+```bash
+npx skills add yangpeng366/ai-theory-app-radar          # 装成本仓的 agent skill
+npx skills add yangpeng366/ai-theory-app-radar --list    # 只看仓里有哪些 skill，不装
+```
+
+装完得到一份 `SKILL.md`：告诉 agent 什么时候该用这个雷达、怎么先读 `radar/index.json` 再按需打开候选卡片、分诊时输出哪三行，以及改动本仓后要跑哪几道自检闸门。
+
 ## Why
 
 AI math output is arriving faster than human review. Chasing every repo is wasteful. This project keeps a reusable pipeline and a triage log that others can extend.
@@ -24,7 +33,7 @@ Intake buckets:
 
 ## For agents
 
-Most downstream users are LLM agents, so compatibility stops at the interface level:
+Most downstream users are LLM agents, so compatibility stops at the interface level. Install the repo as a skill with `npx skills add yangpeng366/ai-theory-app-radar` (see 「一键安装（面向 Agent）」 above); the installed `SKILL.md` points at the same interface:
 
 - one candidate card per file in `radar/`, named `radar/<date>-<topic>-<slug>.md`
 - machine checks live in
